@@ -1,5 +1,6 @@
 ﻿// ReSharper disable InconsistentNaming
 
+using System.Numerics;
 using System.Text;
 
 namespace Intel8008Tools;
@@ -56,10 +57,40 @@ public class Intel8008
         set => Memory[HL] = value;
     }
 
+    public byte Z
+    {
+        get => (byte)(Cc.Z ? 1 : 0);
+        set => Cc.Z = value == 0;
+    }
+
+    public byte S
+    {
+        get => (byte)(Cc.S ? 1 : 0);
+        set => Cc.S = (sbyte)value < 0;
+    }
+
+    public byte P
+    {
+        get => (byte)(Cc.P ? 1 : 0);
+        set => Cc.P = BitOperations.PopCount(value) % 2 == 0;
+    }
+
+    public byte Cy
+    {
+        get => (byte)(Cc.Cy ? 1 : 0);
+        set => Cc.Cy = value != 0;
+    }
+
+    public byte Ac
+    {
+        get => (byte)(Cc.Ac ? 1 : 0);
+        set => Cc.Ac = value != 0;
+    }
+
     public ushort Sp;
     public ushort Pc;
     public readonly byte[] Memory = new byte[0x10000];
-    public readonly ConditionCodes Cc = new();
+    public ConditionCodes Cc = new();
 
     public Intel8008(byte[] memory)
     {
@@ -106,7 +137,7 @@ public class Intel8008
     {
         var res = "NOT IMPLEMENTED";
         offset = 0;
-        switch (Memory[pos] & 0b11000000)
+        switch ((Memory[pos] & 0b11000000) >> 6)
         {
             case 0b00:
                 switch (Memory[pos] & 0b00111111)
@@ -330,7 +361,7 @@ public class Intel8008
                                         break;
                                     case Reg.M:
                                         cycles += 10;
-                                        ddd = $"Memory[HL]";
+                                        ddd = "Memory[HL]";
                                         break;
                                     case Reg.A:
                                         cycles += 5;
@@ -497,7 +528,8 @@ public class Intel8008
                                 src = "A";
                                 break;
                         }
-                        switch ((Reg)((Memory[pos]>>3) & 0b111))
+
+                        switch ((Reg)((Memory[pos] >> 3) & 0b111))
                         {
                             case Reg.B:
                                 dest = "B";
@@ -529,40 +561,128 @@ public class Intel8008
                     }
                         break;
                 }
+
                 break;
             case 0b10:
             {
-                var alu = "";
-                switch ((Alu)((Memory[pos] >> 3)&0b111))
+                cycles += 5; //4 - 7
+                var src = "";
+                switch ((Reg)(Memory[pos] & 0b111))
+                {
+                    case Reg.B:
+                        src = "B";
+                        break;
+                    case Reg.C:
+                        src = "C";
+                        break;
+                    case Reg.D:
+                        src = "D";
+                        break;
+                    case Reg.E:
+                        src = "E";
+                        break;
+                    case Reg.H:
+                        src = "H";
+                        break;
+                    case Reg.L:
+                        src = "L";
+                        break;
+                    case Reg.M:
+                        src = "M";
+                        break;
+                    case Reg.A:
+                        src = "A";
+                        break;
+                }
+
+                switch ((Alu)((Memory[pos] >> 3) & 0b111))
                 {
                     case Alu.ADD:
-                        alu = "ADD";
+                        res = $"ADD {src} // A = A + {src};";
                         break;
                     case Alu.ADC:
-                        alu = "ADC";
+                        res = $"ADC {src} // A = A + {src} + Cy";
                         break;
                     case Alu.SUB:
-                        alu = "SUB";
+                        res = $"SUB {src} // A = A - {src}";
                         break;
                     case Alu.SBB:
-                        alu = "SBB";
+                        res = $"SBB {src} // A = A - {src} - Cy";
                         break;
                     case Alu.ANA:
-                        alu = "ANA";
+                        res = $"ANA {src} // A = A & {src}";
                         break;
                     case Alu.XRA:
-                        alu = "XRA";
+                        res = $"XRA {src} // A = A ^ {src}";
                         break;
                     case Alu.ORA:
-                        alu = "ORA";
+                        res = $"ORA {src} // A = A | {src}";
                         break;
                     case Alu.CMP:
-                        alu = "CMP";
+                        res = $"CMP {src} // A = A - {src}";
                         break;
                 }
             }
                 break;
-            case 0b11: break;
+            case 0b11:
+                switch (Memory[pos])
+                {
+                    case 0b11111011:
+                        cycles += 4;
+                        res = "EI // Enable interrupts";
+                        break;
+                    case 0b11111001:
+                        res = "SPHL // SP = HL";
+                        cycles += 5;
+                        break;
+                    case 0b11110011:
+                        cycles += 4;
+                        res = "DI // Disable interrupts";
+                        break;
+                    case 0b11101011:
+                        cycles += 4;
+                        res = "XCHG // tmp = HL; HL = DE; DE = tmp;";
+                        break;
+                    case 0b11101001:
+                        cycles += 5;
+                        res = "PCHL // PC = HL";
+                        break;
+                    case 0b11100011:
+                        cycles += 18;
+                        res = "XTHL // tmp = HL; HL = Memory[SP]; Memory[SP] = tmp;";
+                        break;
+                    case 0b11011011:
+                    {
+                        cycles += 10;
+                        var port = Memory[pos + 1];
+                        offset += 1;
+                        res = $"IN 0x{port:X} // A = port;";
+                    }
+                        break;
+                    case 0b11010011:
+                    {
+                        cycles += 10;
+                        var port = Memory[pos + 1];
+                        offset += 1;
+                        res = $"OUT 0x{port:X} // port = A;";
+                    }
+                        break;
+                    case 0b11001101:
+                    {
+                        cycles += 17;
+                        var addr = (short)((Memory[pos + 2] << 8) | Memory[pos + 1]);
+                        offset += 2;
+                        res =
+                            $"CALL 0x{addr:X} // SP -= 2; Memory[SP] = (byte)(PC&0xFF); Memory[SP+1] = (byte)((PC>>8)&0xFF); PC = 0x{addr:X}";
+                    }
+                        break;
+                    case 0b11001001:
+                        cycles += 10;
+                        res = "RET // PC = (short)((Memory[Sp + 1] << 8) | Memory[Sp]); SP += 2;";
+                        break;
+                }
+
+                break;
         }
 
         offset++;
@@ -571,6 +691,52 @@ public class Intel8008
 
     public Intel8008(string pathToFile) : this(File.ReadAllBytes(pathToFile))
     {
+    }
+
+    public byte AluAdd(byte a, byte b, bool c = false)
+    {
+        var res = (ushort)(a + b + (c ? 1 : 0));
+        SetArithFlags(res);
+        Cc.Ac = (a & 0xF) + (b & 0xF) > 0xF;
+        return (byte)(res & 0xFF);
+    }
+
+    public byte AluCmp(byte a, byte b) => AluSub(a, b);
+
+    public byte AluSub(byte a, byte b, bool c = false)
+    {
+        var res = (ushort)(a - b - (c ? 1 : 0));
+        SetArithFlags(res);
+        Cc.Ac = (a & 0xF) < (b & 0xF);
+        return (byte)(res & 0xFF);
+    }
+
+    public byte AluAnd(byte a, byte b) => AluLogical((v1, v2) => (byte)(v1 & v2), a, b);
+    public byte AluXor(byte a, byte b) => AluLogical((v1, v2) => (byte)(v1 ^ v2), a, b);
+    public byte AluOR(byte a, byte b) => AluLogical((v1, v2) => (byte)(v1 | v2), a, b);
+
+    private byte AluLogical(Func<byte, byte, byte> op, byte a, byte b)
+    {
+        var res = op(a, b);
+        SetLogicFlags(res);
+        return res;
+    }
+
+    private void SetLogicFlags(byte res)
+    {
+        Z = res;
+        S = res;
+        P = res;
+        Cy = 0;
+        Ac = 0;
+    }
+
+    private void SetArithFlags(ushort res)
+    {
+        Z = (byte)(res & 0xFF);
+        S = (byte)(res & 0xFF);
+        P = (byte)(res & 0xFF);
+        Cc.Cy = res > 0xFF;
     }
 
     public Intel8008() : this(Array.Empty<byte>())
