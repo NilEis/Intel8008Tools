@@ -111,34 +111,90 @@ public class Intel8008
             case 0b00:
                 switch (Memory[pos] & 0b00111111)
                 {
+                    case 0b00000000:
+                        res = "NOP";
+                        cycles += 4;
+                        break;
                     case 0b00000111:
                         cycles += 4;
-                        res = "Cy = A >> 7; A = A << 1; A = (A & 0b11111110) | Cy";
+                        res = "RLC // Cy = A >> 7; A = A << 1; A = (A & 0b11111110) | Cy";
                         break;
                     case 0b00001111:
                         cycles += 4;
-                        res = "Cy = A & 0b1; A = A >> 1; A = (A & 0b01111111) | (Cy << 7)";
+                        res = "RRC // Cy = A & 0b1; A = A >> 1; A = (A & 0b01111111) | (Cy << 7)";
                         break;
                     case 0b00010111:
                         cycles += 4;
-                        res = "Cy = A >> 7; A = A << 1; A = (A & 0b11111110) | Cy";
+                        res = "RAL // tmp = A >> 7; A = A << 1; A = (A & 0b11111110) | Cy; Cy = tmp";
                         break;
                     case 0b00011111:
                         cycles += 4;
-                        res = "Cy = A & 0b1; A = A >> 1; A = (A & 0b01111111) | (Cy << 7)";
+                        res = "RAR // tmp = A & 0b1; A = A >> 1; A = (A & 0b01111111) | (Cy << 7); Cy = tmp";
+                        break;
+                    case 0b00100010:
+                    {
+                        cycles += 16;
+                        var addr = (Memory[pos + 2] << 8) | Memory[pos + 1];
+                        offset += 2;
+                        res = $"SHLD {addr} // Memory[{addr}] = HL";
+                    }
+                        break;
+                    case 0b00100111:
+                    {
+                        cycles += 4;
+                        res = "DAA // A = ((A & 0b1111) > 9 || Ac ) ? A+6 : A; A = ((A >> 4) > 9 || Cy) ? A + 0x60 : A";
+                    }
+                        break;
+                    case 0b00101010:
+                    {
+                        cycles += 13;
+                        var addr = (Memory[pos + 2] << 8) | Memory[pos + 1];
+                        offset += 2;
+                        res = $"LHLD {addr} // HL = Memory[{addr}]";
+                    }
+                        break;
+                    case 0b00101111:
+                    {
+                        cycles += 4;
+                        res = "CMA // A = ~A";
+                    }
+                        break;
+                    case 0b00110010:
+                    {
+                        cycles += 13;
+                        var addr = (Memory[pos + 2] << 8) | Memory[pos + 1];
+                        offset += 2;
+                        res = $"STA {addr} // Memory[{addr}] = A";
+                    }
+                        break;
+                    case 0b00110111:
+                    {
+                        cycles += 4;
+                        res = "STC // Cy = 1";
+                    }
+                        break;
+                    case 0b00111010:
+                    {
+                        cycles += 13;
+                        var addr = (Memory[pos + 2] << 8) | Memory[pos + 1];
+                        offset += 2;
+                        res = $"LDA {addr} // A = Memory[{addr}]";
+                    }
+                        break;
+                    case 0b00111111:
+                    {
+                        cycles += 4;
+                        res = "CMC // Cy = ~Cy";
+                    }
                         break;
                     default:
                         switch (Memory[pos] & 0b1111)
                         {
-                            case 0b000:
-                                res = "NOP";
-                                cycles += 4;
-                                break;
                             case 0b001:
                             {
                                 cycles += 10;
                                 var rp = "";
-                                var data = (Memory[pos + 1] << 8) | Memory[pos + 2];
+                                var data = (Memory[pos + 2] << 8) | Memory[pos + 1];
                                 offset += 2;
                                 switch ((Rp)((Memory[pos] >> 4) & 0b11))
                                 {
@@ -156,7 +212,7 @@ public class Intel8008
                                         break;
                                 }
 
-                                res = $"{rp} = {data}";
+                                res = $"LXI {rp}, {data} // {rp} = {data}";
                             }
                                 break;
                             case 0b010:
@@ -177,7 +233,7 @@ public class Intel8008
                                         break;
                                 }
 
-                                res = $"{rp} = A";
+                                res = $"STAX {rp} // {rp} = A";
                             }
                                 break;
                             case 0b011:
@@ -198,7 +254,7 @@ public class Intel8008
                                         break;
                                 }
 
-                                res = $"{rp} += 1";
+                                res = $"INX {rp} // {rp} += 1";
                             }
                                 break;
                             case 0b100:
@@ -240,7 +296,7 @@ public class Intel8008
                                         break;
                                 }
 
-                                res = $"{ddd} += 1";
+                                res = $"INR {ddd} // {ddd} += 1";
                             }
                                 break;
                             case 0b101:
@@ -282,7 +338,7 @@ public class Intel8008
                                         break;
                                 }
 
-                                res = $"{ddd} -= 1";
+                                res = $"DCR {ddd} // {ddd} -= 1";
                             }
                                 break;
                             case 0b110:
@@ -326,7 +382,7 @@ public class Intel8008
                                         break;
                                 }
 
-                                res = $"{ddd} = {data}";
+                                res = $"MVI {ddd}, {data} // {ddd} = {data}";
                             }
                                 break;
                             case 0b1001:
@@ -349,7 +405,7 @@ public class Intel8008
                                         break;
                                 }
 
-                                res = $"HL += {rp}";
+                                res = $"DAD {rp} // HL += {rp}";
                             }
                                 break;
                             case 0b1010:
@@ -370,7 +426,7 @@ public class Intel8008
                                         break;
                                 }
 
-                                res = $"A = {rp}";
+                                res = $"LDAX {rp} // A = {rp}";
                             }
                                 break;
                             case 0b1011:
@@ -393,7 +449,7 @@ public class Intel8008
                                         break;
                                 }
 
-                                res = $"{rp} -= 1";
+                                res = $"DCX {rp} // {rp} -= 1";
                             }
                                 break;
                         }
@@ -402,8 +458,110 @@ public class Intel8008
                 }
 
                 break;
-            case 0b01: break;
-            case 0b10: break;
+            case 0b01:
+                switch (Memory[pos])
+                {
+                    case 0b01110110:
+                        cycles += 7;
+                        res = "HLT // offset = -1 //wait until interrupt";
+                        break;
+                    default:
+                    {
+                        cycles += 6; // 5-7
+                        var src = "";
+                        var dest = "";
+                        switch ((Reg)(Memory[pos] & 0b111))
+                        {
+                            case Reg.B:
+                                src = "B";
+                                break;
+                            case Reg.C:
+                                src = "C";
+                                break;
+                            case Reg.D:
+                                src = "D";
+                                break;
+                            case Reg.E:
+                                src = "E";
+                                break;
+                            case Reg.H:
+                                src = "H";
+                                break;
+                            case Reg.L:
+                                src = "L";
+                                break;
+                            case Reg.M:
+                                src = "M";
+                                break;
+                            case Reg.A:
+                                src = "A";
+                                break;
+                        }
+                        switch ((Reg)((Memory[pos]>>3) & 0b111))
+                        {
+                            case Reg.B:
+                                dest = "B";
+                                break;
+                            case Reg.C:
+                                dest = "C";
+                                break;
+                            case Reg.D:
+                                dest = "D";
+                                break;
+                            case Reg.E:
+                                dest = "E";
+                                break;
+                            case Reg.H:
+                                dest = "H";
+                                break;
+                            case Reg.L:
+                                dest = "L";
+                                break;
+                            case Reg.M:
+                                dest = "M";
+                                break;
+                            case Reg.A:
+                                dest = "A";
+                                break;
+                        }
+
+                        res = $"MOV {dest}, {src} // {dest} = {src}";
+                    }
+                        break;
+                }
+                break;
+            case 0b10:
+            {
+                var alu = "";
+                switch ((Alu)((Memory[pos] >> 3)&0b111))
+                {
+                    case Alu.ADD:
+                        alu = "ADD";
+                        break;
+                    case Alu.ADC:
+                        alu = "ADC";
+                        break;
+                    case Alu.SUB:
+                        alu = "SUB";
+                        break;
+                    case Alu.SBB:
+                        alu = "SBB";
+                        break;
+                    case Alu.ANA:
+                        alu = "ANA";
+                        break;
+                    case Alu.XRA:
+                        alu = "XRA";
+                        break;
+                    case Alu.ORA:
+                        alu = "ORA";
+                        break;
+                    case Alu.CMP:
+                        alu = "CMP";
+                        break;
+                }
+            }
+                break;
             case 0b11: break;
         }
 
@@ -417,5 +575,16 @@ public class Intel8008
 
     public Intel8008() : this(Array.Empty<byte>())
     {
+    }
+
+    private void WriteToMemory(short addr, byte value)
+    {
+        Memory[addr] = value;
+    }
+
+    private void WriteToMemory(short addr, short value)
+    {
+        WriteToMemory(addr, (byte)(value & 0xFF));
+        WriteToMemory((short)(addr + 1), (byte)((value >> 8) & 0xFF));
     }
 }

@@ -20,6 +20,49 @@ public enum Reg : byte
     A = 0b111
 }
 
+public enum Alu : byte
+{
+    /// <summary>
+    ///  ADD ADI (A ← A + arg)
+    /// </summary>
+    ADD = 0b000,
+
+    /// <summary>
+    ///  ADC ACI (A ← A + arg + Cy)
+    /// </summary>
+    ADC = 0b001,
+
+    /// <summary>
+    ///  SUB SUI (A ← A - arg)
+    /// </summary>
+    SUB = 0b010,
+
+    /// <summary>
+    ///  SBB SBI (A ← A - arg - Cy)
+    /// </summary>
+    SBB = 0b011,
+
+    /// <summary>
+    ///  ANA ANI (A ← A ∧ arg) 
+    /// </summary>
+    ANA = 0b100,
+
+    /// <summary>
+    ///  XRA XRI (A ← A ⊻ arg) 
+    /// </summary>
+    XRA = 0b101,
+
+    /// <summary>
+    ///  ORA ORI (A ← A ∨ arg) 
+    /// </summary>
+    ORA = 0b110,
+
+    /// <summary>
+    ///  CMP CPI (A - arg) 
+    /// </summary>
+    CMP = 0b111
+}
+
 public enum Opcode : byte
 {
     NOP = 0x00,
