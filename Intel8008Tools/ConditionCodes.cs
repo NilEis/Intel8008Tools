@@ -1,6 +1,6 @@
 ﻿namespace Intel8008Tools;
 
-public readonly record struct ConditionCodes(bool Z, bool S, bool P, bool Cy, bool Ac, byte Pad)
+public record struct ConditionCodes(bool Z, bool S, bool P, bool Cy, bool Ac, byte Pad)
 {
     public byte AsValue()
     {
@@ -11,6 +11,10 @@ public readonly record struct ConditionCodes(bool Z, bool S, bool P, bool Cy, bo
 
     public void Init()
     {
-        
+        Z = false;
+        S = false;
+        P = true;
+        Cy = false;
+        Ac = false;
     }
 }
