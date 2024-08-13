@@ -14,66 +14,68 @@ public class Intel8008
         ulong pins,
         byte[] ports,
         byte A,
-        short BC,
-        short DE,
-        short HL,
-        short SP,
-        short PC,
+        ushort BC,
+        ushort DE,
+        ushort HL,
+        ushort SP,
+        ushort PC,
         byte ConditionState,
-        byte[] mem)
-    {
-    }
+        byte[] mem);
 
-    private Stack<State> states = [];
-    private int iterations = 0;
-    private uint cycles = 0;
-    public ulong pins = 0;
-    private byte[] ports = new byte[256];
-    public byte A;
-    public short BC;
-    private bool willFail = false;
+    private readonly Stack<State> states = [];
+    private int iterations;
+    private uint cycles;
+    private ulong pins;
+    public Func<int, byte>[] inPorts;
+    public Action<int, byte>[] outPorts;
 
-    public byte B
+    public byte[] Ports = new byte[256];
+
+    private byte A;
+    private ushort BC;
+    private bool willFail;
+
+    private byte B
     {
         get => (byte)(BC >> 8);
-        set => BC = (short)((BC & 0xFF) | (value << 8));
+        set => BC = (ushort)((BC & 0xFF) | (value << 8));
     }
 
-    public byte C
+    private byte C
     {
         get => (byte)(BC & 0xFF);
-        set => BC = (short)((BC & (0xFF << 8)) | value);
+        set => BC = (ushort)((BC & (0xFF << 8)) | value);
     }
 
-    public short DE;
+    private ushort DE;
 
-    public byte D
+    private byte D
     {
         get => (byte)(DE >> 8);
-        set => DE = (short)((DE & 0xFF) | (value << 8));
+        set => DE = (ushort)((DE & 0xFF) | (value << 8));
     }
 
-    public byte E
+    private byte E
     {
         get => (byte)(DE & 0xFF);
-        set => DE = (short)((DE & (0xFF << 8)) | value);
+        set => DE = (ushort)((DE & (0xFF << 8)) | value);
     }
 
-    public short HL;
+    private ushort HL;
 
-    public byte H
+    private byte H
     {
         get => (byte)(HL >> 8);
-        set => HL = (short)((HL & 0xFF) | (value << 8));
+        set => HL = (ushort)((HL & 0xFF) | (value << 8));
     }
 
     public byte L
     {
         get => (byte)(HL & 0xFF);
-        set => HL = (short)((HL & (0xFF << 8)) | value);
+        set => HL = (ushort)((HL & (0xFF << 8)) | value);
     }
 
-    public byte M
+    private byte M
     {
         get => LoadByteFromMemory(HL);
         set => WriteToMemory(HL, value);
@@ -88,7 +90,7 @@ public class Intel8008
     public byte S
     {
         get => (byte)(Cc.S ? 1 : 0);
-        set => Cc.S = (sbyte)value < 0;
+        set => Cc.S = (value & 0b10000000) == 0b10000000;
     }
 
     public byte P
@@ -97,7 +99,7 @@ public class Intel8008
         set => Cc.P = BitOperations.PopCount(value) % 2 == 0;
     }
 
-    public byte Cy
+    private byte Cy
     {
         get => (byte)(Cc.Cy ? 1 : 0);
         set => Cc.Cy = value != 0;
@@ -109,15 +111,20 @@ public class Intel8008
         set => Cc.Ac = value != 0;
     }
 
-    public short SP;
-    public short PC;
-    public readonly byte[] Memory = new byte[0x10000];
-    public ConditionCodes Cc = new();
+    private ushort SP;
+    private bool JmpWasExecuted;
 
-    public Intel8008(byte[] memory)
+    private ushort PC;
+
+    private readonly byte[] Memory = new byte[0x10000];
+    private ConditionCodes Cc;
+
+    private Intel8008(byte[] memory)
     {
         Array.Clear(Memory);
         InitRegisters();
+        inPorts = Enumerable.Repeat((int port) => Ports[port], 256).ToArray();
+        outPorts = Enumerable.Repeat((int port, byte value) => { Ports[port] = value; }, 256).ToArray();
         LoadMemory(memory, 0);
     }
 
@@ -126,7 +133,7 @@ public class Intel8008
         return LoadMemory(File.ReadAllBytes(filePath), offset);
     }
 
-    private Intel8008 LoadMemory(byte[] memory, int offset)
+    public Intel8008 LoadMemory(byte[] memory, int offset)
     {
         memory.CopyTo(Memory, offset);
         return this;
@@ -143,26 +150,26 @@ public class Intel8008
         Cc.Init();
     }
 
-    public string Disassemble(short start, short end)
+    public string Disassemble(ushort start, ushort end)
     {
         var i = start;
         var res = new StringBuilder();
         var cyc = (uint)0;
         while (i < end)
         {
-            res.AppendLine(Disassemble(i, out var offset, ref cyc));
-            i += offset;
+            res.AppendLine($"0x{i:X}: {Disassemble(i, out var offset, ref cyc)}");
+            i += (ushort)offset;
         }
 
         return res.ToString();
     }
 
-    private string Disassemble(short pos, out short offset, ref uint cyc)
+    private string Disassemble(ushort pos, out short offset, ref uint cyc)
     {
         return Disassemble(pos, Memory, out offset, ref cyc);
     }
 
-    public static string Disassemble(short pos, byte[] mem, out short offset, ref uint cyc)
+    public static string Disassemble(ushort pos, byte[] mem, out short offset, ref uint cyc)
     {
         var res = $"NOT IMPLEMENTED: 0x{mem[pos]:X} - 0b{mem[pos]:B}";
         offset = 0;
@@ -196,7 +203,7 @@ public class Intel8008
                         cyc += 16;
                         var addr = (mem[pos + 2] << 8) | mem[pos + 1];
                         offset += 2;
-                        res = $"SHLD {addr} // Memory[{addr}] = HL";
+                        res = $"SHLD 0x{addr:X4} // Memory[0x{addr:X4}] = HL";
                     }
                         break;
                     case 0b00100111:
@@ -210,7 +217,7 @@ public class Intel8008
                         cyc += 13;
                         var addr = (mem[pos + 2] << 8) | mem[pos + 1];
                         offset += 2;
-                        res = $"LHLD {addr} // HL = Memory[{addr}]";
+                        res = $"LHLD 0x{addr:X4} // HL = Memory[0x{addr:X4}]";
                     }
                         break;
                     case 0b00101111:
@@ -224,7 +231,7 @@ public class Intel8008
                         cyc += 13;
                         var addr = (mem[pos + 2] << 8) | mem[pos + 1];
                         offset += 2;
-                        res = $"STA {addr} // Memory[{addr}] = A";
+                        res = $"STA 0x{addr:X4} // Memory[0x{addr:X4}] = A";
                     }
                         break;
                     case 0b00110111:
@@ -238,7 +245,7 @@ public class Intel8008
                         cyc += 13;
                         var addr = (mem[pos + 2] << 8) | mem[pos + 1];
                         offset += 2;
-                        res = $"LDA {addr} // A = Memory[{addr}]";
+                        res = $"LDA 0x{addr:X4} // A = Memory[0x{addr:X4}]";
                     }
                         break;
                     case 0b00111111:
@@ -272,7 +279,7 @@ public class Intel8008
                                         break;
                                 }
 
-                                res = $"LXI {rp}, {data} // {rp} = {data}";
+                                res = $"LXI {rp}, 0x{data:X4} // {rp} = 0x{data:X4}";
                             }
                                 break;
                             case 0b0010:
@@ -311,10 +318,10 @@ public class Intel8008
                                         rp = "DE";
                                         break;
                                     case Rp.HL:
-                                        rp = "INVALID_REGISTER -> HL";
+                                        rp = "HL";
                                         break;
                                     case Rp.SP:
-                                        rp = "INVALID_REGISTER -> SP";
+                                        rp = "SP";
                                         break;
                                 }
 
@@ -364,7 +371,7 @@ public class Intel8008
                                         break;
                                 }
 
-                                res = $"LDAX {rp} // A = {rp}";
+                                res = $"LDAX {rp} // A = Memory[{rp}]";
                             }
                                 break;
                             case 0b1011:
@@ -518,7 +525,7 @@ public class Intel8008
                                                 break;
                                         }
 
-                                        res = $"MVI {ddd}, {data} // {ddd} = {data}";
+                                        res = $"MVI {ddd}, 0x{data:X2} // {ddd} = 0x{data:X2}";
                                     }
                                         break;
                                 }
@@ -727,7 +734,7 @@ public class Intel8008
                         cyc += 10;
                         var addr = (short)((mem[pos + 2] << 8) | mem[pos + 1]);
                         offset += 2;
-                        res = $"JMP 0x{addr:X} // PC = 0x{addr:X}";
+                        res = $"JMP 0x{addr:X4} // PC = 0x{addr:X4}";
                     }
                         break;
                     default:
@@ -789,7 +796,7 @@ public class Intel8008
                                         reg = "HL";
                                         break;
                                     case Rp.SP:
-                                        reg = "SP";
+                                        reg = "PSW";
                                         break;
                                 }
 
@@ -805,29 +812,29 @@ public class Intel8008
                                 {
                                     case CompareCondition.NZ:
                                         res =
-                                            $"JNZ // if(!Cc.Z){{PC = {addr};}}";
+                                            $"JNZ 0x{addr:X4} // if(!Cc.Z){{PC = 0x{addr:X4};}}";
                                         break;
                                     case CompareCondition.Z:
-                                        res = $"JZ // if(Cc.Z){{PC = {addr};}}";
+                                        res = $"JZ 0x{addr:X4} // if(Cc.Z){{PC = 0x{addr:X4};}}";
                                         break;
                                     case CompareCondition.NC:
                                         res =
-                                            $"JNC // if(!Cc.Cy){{PC = {addr};}}";
+                                            $"JNC 0x{addr:X4} // if(!Cc.Cy){{PC = 0x{addr:X4};}}";
                                         break;
                                     case CompareCondition.C:
-                                        res = $"JC // if(Cc.Cy){{PC = {addr};}}";
+                                        res = $"JC 0x{addr:X4} // if(Cc.Cy){{PC = 0x{addr:X4};}}";
                                         break;
                                     case CompareCondition.PO:
-                                        res = $"JPO // if(!Cc.P){{PC = {addr};}}";
+                                        res = $"JPO 0x{addr:X4} // if(!Cc.P){{PC = 0x{addr:X4};}}";
                                         break;
                                     case CompareCondition.PE:
-                                        res = $"JPE // if(Cc.P){{PC = {addr};}}";
+                                        res = $"JPE 0x{addr:X4} // if(Cc.P){{PC = 0x{addr:X4};}}";
                                         break;
                                     case CompareCondition.P:
-                                        res = $"JP // if(Cc.S){{PC = {addr};}}";
+                                        res = $"JP 0x{addr:X4} // if(Cc.S){{PC = 0x{addr:X4};}}";
                                         break;
                                     case CompareCondition.N:
-                                        res = $"JN // if(!Cc.S){{PC = {addr};}}";
+                                        res = $"JN 0x{addr:X4} // if(!Cc.S){{PC = 0x{addr:X4};}}";
                                         break;
                                 }
                             }
@@ -882,7 +889,7 @@ public class Intel8008
                                     Rp.BC => "BC",
                                     Rp.DE => "DE",
                                     Rp.HL => "HL",
-                                    Rp.SP => "SP",
+                                    Rp.SP => "PSW",
                                     _ => ""
                                 };
 
@@ -899,28 +906,28 @@ public class Intel8008
                                 switch ((Alu)((mem[pos] >> 3) & 0b111))
                                 {
                                     case Alu.ADD:
-                                        res = $"ADI {data} // A = A + {data};";
+                                        res = $"ADI 0x{data:X2} // A = A + 0x{data:X2};";
                                         break;
                                     case Alu.ADC:
-                                        res = $"ADI {data} // A = A + {data} + Cy";
+                                        res = $"ACI 0x{data:X2} // A = A + 0x{data:X2} + Cy";
                                         break;
                                     case Alu.SUB:
-                                        res = $"SUI {data} // A = A - {data}";
+                                        res = $"SUI 0x{data:X2} // A = A - 0x{data:X2}";
                                         break;
                                     case Alu.SBB:
-                                        res = $"SBI {data} // A = A - {data} - Cy";
+                                        res = $"SBI 0x{data:X2} // A = A - 0x{data:X2} - Cy";
                                         break;
                                     case Alu.ANA:
-                                        res = $"ANI {data} // A = A & {data}";
+                                        res = $"ANI 0x{data:X2} // A = A & 0x{data:X2}";
                                         break;
                                     case Alu.XRA:
-                                        res = $"XRI {data} // A = A ^ {data}";
+                                        res = $"XRI 0x{data:X2} // A = A ^ 0x{data:X2}";
                                         break;
                                     case Alu.ORA:
-                                        res = $"ORI {data} // A = A | {data}";
+                                        res = $"ORI 0x{data:X2} // A = A | 0x{data:X2}";
                                         break;
                                     case Alu.CMP:
-                                        res = $"CMI {data} // A = A - {data}";
+                                        res = $"CPI 0x{data:X2} // A = A - 0x{data:X2}";
                                         break;
                                 }
                             }
@@ -945,17 +952,45 @@ public class Intel8008
         return res;
     }
 
-    public bool run(short start)
+    public bool run(uint numCycles = 1, bool cpudiag = false, bool safe = false)
     {
-        Execute(PC, out var offset);
-        PC += offset;
+        var startCycles = cycles;
+        short offset;
+        do
+        {
+            if (safe)
+            {
+                ExecuteSafe(PC, out offset, cpudiag);
+            }
+            else
+            {
+                Execute(PC, out offset, cpudiag);
+            }
+
+            if (!JmpWasExecuted)
+            {
+                PC += (ushort)offset;
+            }
+        } while (offset != 0 && (startCycles - cycles) <= numCycles);
+
         return offset != 0;
     }
 
-    public void Execute(short pos, out short offset)
+    private void Execute(ushort pos, out short offset, bool cpudiag = false)
+    {
+        offset = 0;
+        ExecuteTick(pos, ref offset, cpudiag);
+        offset++;
+        iterations++;
+    }
+
+    private void ExecuteSafe(ushort pos, out short offset, bool cpudiag = false)
     {
         if (willFail)
         {
+            PopState();
+            uint c = 0;
+            Console.Out.WriteLine($"Failed at 0x{PC:X}\n{Disassemble(PC, Memory, out _, ref c)}");
             Console.Out.WriteLine("Add breakpoint HERE to debug");
             willFail = false;
         }
@@ -964,21 +999,20 @@ public class Intel8008
         offset = 0;
         try
         {
-            ExecuteTick(pos, ref offset);
+            ExecuteTick(pos, ref offset, cpudiag);
             offset++;
             iterations++;
         }
         catch
         {
-            PopState();
-            uint c = 0;
-            Console.Out.WriteLine($"Failed at 0x{PC:X}\n{Intel8008.Disassemble(PC, Memory, out _, ref c)}");
+            offset = 1;
             willFail = true;
         }
     }
 
-    private void ExecuteTick(short pos, ref short offset)
+    private void ExecuteTick(ushort pos, ref short offset, bool cpudiag = false)
     {
+        JmpWasExecuted = false;
         switch ((Memory[pos] & 0b11000000) >> 6)
         {
             case 0b00:
@@ -1123,15 +1157,17 @@ public class Intel8008
                                 switch ((Rp)((Memory[pos] >> 4) & 0b11))
                                 {
                                     case Rp.BC:
-                                        BC = AluAddX(BC, 1);
+                                        BC = AluAddX(BC, 1, false, Flags.NONE);
                                         break;
                                     case Rp.DE:
-                                        DE = AluAddX(BC, 1);
+                                        DE = AluAddX(BC, 1, false, Flags.NONE);
                                         break;
                                     case Rp.HL:
-                                        throw new UnreachableException("INVALID_REGISTER -> HL");
+                                        DE = AluAddX(BC, 1, false, Flags.NONE);
+                                        break;
                                     case Rp.SP:
-                                        throw new UnreachableException("INVALID_REGISTER -> SP");
+                                        DE = AluAddX(BC, 1, false, Flags.NONE);
+                                        break;
                                 }
                             }
                                 break;
@@ -1141,16 +1177,16 @@ public class Intel8008
                                 switch ((Rp)((Memory[pos] >> 4) & 0b11))
                                 {
                                     case Rp.BC:
-                                        HL = AluAddX(HL, BC);
+                                        HL = AluAddX(HL, BC, true, Flags.CY);
                                         break;
                                     case Rp.DE:
-                                        HL = AluAddX(HL, DE);
+                                        HL = AluAddX(HL, DE, true, Flags.CY);
                                         break;
                                     case Rp.HL:
-                                        HL = AluAddX(HL, HL);
+                                        HL = AluAddX(HL, HL, true, Flags.CY);
                                         break;
                                     case Rp.SP:
-                                        HL = AluAddX(HL, SP);
+                                        HL = AluAddX(HL, SP, true, Flags.CY);
                                         break;
                                 }
                             }
@@ -1158,19 +1194,15 @@ public class Intel8008
                             case 0b1010:
                             {
                                 cycles += 7;
-                                switch ((Rp)((Memory[pos] >> 4) & 0b11))
+                                var addr = (Rp)((Memory[pos] >> 4) & 0b11) switch
                                 {
-                                    case Rp.BC:
-                                        A = (byte)BC;
-                                        break;
-                                    case Rp.DE:
-                                        A = (byte)DE;
-                                        break;
-                                    case Rp.HL:
-                                        throw new UnreachableException("INVALID_REGISTER -> HL");
-                                    case Rp.SP:
-                                        throw new UnreachableException("INVALID_REGISTER -> SP");
-                                }
+                                    Rp.BC => BC,
+                                    Rp.DE => DE,
+                                    Rp.HL => throw new UnreachableException("INVALID_REGISTER -> HL"),
+                                    Rp.SP => throw new UnreachableException("INVALID_REGISTER -> SP"),
+                                    _ => throw new UnreachableException("INVALID_REGISTER")
+                                };
+                                A = LoadByteFromMemory(addr);
                             }
                                 break;
                             case 0b1011:
@@ -1179,16 +1211,16 @@ public class Intel8008
                                 switch ((Rp)((Memory[pos] >> 4) & 0b11))
                                 {
                                     case Rp.BC:
-                                        BC = AluSubX(BC, 1);
+                                        BC = AluSubX(BC, 1, false, Flags.NONE);
                                         break;
                                     case Rp.DE:
-                                        DE = AluSubX(BC, 1);
+                                        DE = AluSubX(BC, 1, false, Flags.NONE);
                                         break;
                                     case Rp.HL:
-                                        HL = AluSubX(BC, 1);
+                                        HL = AluSubX(BC, 1, false, Flags.NONE);
                                         break;
                                     case Rp.SP:
-                                        SP = AluSubX(BC, 1);
+                                        SP = AluSubX(BC, 1, false, Flags.NONE);
                                         break;
                                 }
                             }
@@ -1202,35 +1234,35 @@ public class Intel8008
                                         {
                                             case Reg.B:
                                                 cycles += 9;
-                                                B = AluAdd(B, 1);
+                                                B = AluAdd(B, 1, true, Flags.Z | Flags.S | Flags.P | Flags.AC);
                                                 break;
                                             case Reg.C:
                                                 cycles += 5;
-                                                C = AluAdd(C, 1);
+                                                C = AluAdd(C, 1, true, Flags.Z | Flags.S | Flags.P | Flags.AC);
                                                 break;
                                             case Reg.D:
                                                 cycles += 9;
-                                                D = AluAdd(D, 1);
+                                                D = AluAdd(D, 1, true, Flags.Z | Flags.S | Flags.P | Flags.AC);
                                                 break;
                                             case Reg.E:
                                                 cycles += 5;
-                                                E = AluAdd(E, 1);
+                                                E = AluAdd(E, 1, true, Flags.Z | Flags.S | Flags.P | Flags.AC);
                                                 break;
                                             case Reg.H:
                                                 cycles += 9;
-                                                H = AluAdd(H, 1);
+                                                H = AluAdd(H, 1, true, Flags.Z | Flags.S | Flags.P | Flags.AC);
                                                 break;
                                             case Reg.L:
                                                 cycles += 5;
-                                                L = AluAdd(L, 1);
+                                                L = AluAdd(L, 1, true, Flags.Z | Flags.S | Flags.P | Flags.AC);
                                                 break;
                                             case Reg.M:
                                                 cycles += 10;
-                                                M = AluAdd(M, 1);
+                                                M = AluAdd(M, 1, true, Flags.Z | Flags.S | Flags.P | Flags.AC);
                                                 break;
                                             case Reg.A:
                                                 cycles += 5;
-                                                A = AluAdd(A, 1);
+                                                A = AluAdd(A, 1, true, Flags.Z | Flags.S | Flags.P | Flags.AC);
                                                 break;
                                         }
                                     }
@@ -1241,35 +1273,35 @@ public class Intel8008
                                         {
                                             case Reg.B:
                                                 cycles += 9;
-                                                B = AluSub(B, 1);
+                                                B = AluSub(B, 1, true, Flags.Z | Flags.S | Flags.P | Flags.AC);
                                                 break;
                                             case Reg.C:
                                                 cycles += 5;
-                                                C = AluSub(C, 1);
+                                                C = AluSub(C, 1, true, Flags.Z | Flags.S | Flags.P | Flags.AC);
                                                 break;
                                             case Reg.D:
                                                 cycles += 9;
-                                                D = AluSub(D, 1);
+                                                D = AluSub(D, 1, true, Flags.Z | Flags.S | Flags.P | Flags.AC);
                                                 break;
                                             case Reg.E:
                                                 cycles += 5;
-                                                E = AluSub(E, 1);
+                                                E = AluSub(E, 1, true, Flags.Z | Flags.S | Flags.P | Flags.AC);
                                                 break;
                                             case Reg.H:
                                                 cycles += 9;
-                                                H = AluSub(H, 1);
+                                                H = AluSub(H, 1, true, Flags.Z | Flags.S | Flags.P | Flags.AC);
                                                 break;
                                             case Reg.L:
                                                 cycles += 5;
-                                                L = AluSub(L, 1);
+                                                L = AluSub(L, 1, true, Flags.Z | Flags.S | Flags.P | Flags.AC);
                                                 break;
                                             case Reg.M:
                                                 cycles += 10;
-                                                M = AluSub(M, 1);
+                                                M = AluSub(M, 1, true, Flags.Z | Flags.S | Flags.P | Flags.AC);
                                                 break;
                                             case Reg.A:
                                                 cycles += 5;
-                                                A = AluSub(A, 1);
+                                                A = AluSub(A, 1, true, Flags.Z | Flags.S | Flags.P | Flags.AC);
                                                 break;
                                         }
                                     }
@@ -1332,7 +1364,8 @@ public class Intel8008
                 {
                     case 0b01110110:
                         cycles += 7;
-                        offset -= 1;
+                        offset = -1;
+                        JmpWasExecuted = true;
                         break;
                     default:
                     {
@@ -1400,18 +1433,35 @@ public class Intel8008
                     _ => throw new UnreachableException()
                 };
 
-                A = (Alu)((Memory[pos] >> 3) & 0b111) switch
+                switch ((Alu)((Memory[pos] >> 3) & 0b111))
                 {
-                    Alu.ADD => AluAdd(A, v),
-                    Alu.ADC => AluAdd(A, v, true),
-                    Alu.SUB => AluSub(A, v),
-                    Alu.SBB => AluSub(A, v, true),
-                    Alu.ANA => AluAnd(A, v),
-                    Alu.XRA => AluXor(A, v),
-                    Alu.ORA => AluOr(A, v),
-                    Alu.CMP => AluCmp(A, v),
-                    _ => A
-                };
+                    case Alu.ADD:
+                        A = AluAdd(A, v, true);
+                        break;
+                    case Alu.ADC:
+                        A = AluAdd(A, v, true, Flags.ALL, Cc.Cy);
+                        break;
+                    case Alu.SUB:
+                        A = AluSub(A, v, true);
+                        break;
+                    case Alu.SBB:
+                        A = AluSub(A, v, true, Flags.ALL, Cc.Cy);
+                        break;
+                    case Alu.ANA:
+                        A = AluAnd(A, v);
+                        break;
+                    case Alu.XRA:
+                        A = AluXor(A, v);
+                        break;
+                    case Alu.ORA:
+                        A = AluOr(A, v);
+                        break;
+                    case Alu.CMP:
+                        AluCmp(A, v);
+                        break;
+                    default:
+                        break;
+                }
             }
                 break;
             case 0b11:
@@ -1420,6 +1470,7 @@ public class Intel8008
                     case 0b11111011:
                         cycles += 4;
                         SetPin(Pin.INTE, true);
+                        Console.Out.WriteLine("Enable interrupts");
                         break;
                     case 0b11111001:
                         cycles += 5;
@@ -1428,6 +1479,7 @@ public class Intel8008
                     case 0b11110011:
                         cycles += 4;
                         SetPin(Pin.INTE, false);
+                        Console.Out.WriteLine("Disable interrupts");
                         break;
                     case 0b11101011:
                     {
@@ -1438,6 +1490,7 @@ public class Intel8008
                     case 0b11101001:
                         cycles += 5;
                         PC = HL;
+                        JmpWasExecuted = true;
                         break;
                     case 0b11100011:
                     {
@@ -1452,7 +1505,7 @@ public class Intel8008
                         cycles += 10;
                         var port = LoadByteFromMemory(pos + 1);
                         offset += 1;
-                        A = ports[port];
+                        A = inPorts[port](port);
                     }
                         break;
                     case 0b11010011:
@@ -1460,7 +1513,7 @@ public class Intel8008
                         cycles += 10;
                         var port = LoadByteFromMemory(pos + 1);
                         offset += 1;
-                        ports[port] = A;
+                        outPorts[port](port, A);
                     }
                         break;
                     case 0b11001101:
@@ -1468,22 +1521,57 @@ public class Intel8008
                         cycles += 17;
                         var addr = LoadShortFromMemory(pos + 1);
                         offset += 2;
-                        SP -= 2;
-                        WriteToMemory(SP, PC);
-                        PC = addr;
+                        switch (cpudiag)
+                        {
+                            case true when addr == 5:
+                                switch (C)
+                                {
+                                    case 9:
+                                    {
+                                        Console.Out.WriteLine(
+                                            $"0x{pos:X4}: {Memory[pos]:X}{Memory[pos + 1]:X2}{Memory[pos + 2]:X2}");
+                                        var offs = DE;
+                                        Console.Out.WriteLine($"offset: {offs:X}");
+                                        for (var i = offs + 3; (char)Memory[i] != '$'; i++)
+                                        {
+                                            Console.Out.Write((char)Memory[i]);
+                                        }
+
+                                        Console.Out.WriteLine('\n');
+                                        break;
+                                    }
+                                    case 2:
+                                        Console.Out.WriteLine("print char routine called");
+                                        break;
+                                }
+
+                                break;
+                            case true when addr == 0:
+                                Console.Out.WriteLine("Exiting cpudiag");
+                                offset = -1;
+                                break;
+                            default:
+                                SP -= 2;
+                                WriteToMemory(SP, PC);
+                                PC = addr;
+                                JmpWasExecuted = true;
+                                break;
+                        }
                     }
                         break;
                     case 0b11001001:
                         cycles += 10;
                         PC = LoadShortFromMemory(SP);
+                        JmpWasExecuted = true;
                         SP += 2;
                         break;
                     case 0b11000011:
                     {
                         cycles += 10;
-                        var addr = (short)((Memory[pos + 2] << 8) | Memory[pos + 1]);
+                        var addr = LoadShortFromMemory(pos + 1);
                         offset += 2;
                         PC = addr;
+                        JmpWasExecuted = true;
                     }
                         break;
                     default:
@@ -1507,6 +1595,7 @@ public class Intel8008
                                 if (cond)
                                 {
                                     PC = LoadShortFromMemory(SP);
+                                    JmpWasExecuted = true;
                                     SP += 2;
                                 }
                             }
@@ -1526,7 +1615,7 @@ public class Intel8008
                                         HL = LoadShortFromMemory(SP);
                                         break;
                                     case Rp.SP:
-                                        SP = LoadShortFromMemory(SP);
+                                        PSW = LoadShortFromMemory(SP);
                                         break;
                                     default:
                                         throw new ArgumentOutOfRangeException();
@@ -1538,7 +1627,7 @@ public class Intel8008
                             case 0b010:
                             {
                                 cycles += 10;
-                                var addr = (short)((Memory[pos + 2] << 8) | Memory[pos + 1]);
+                                var addr = LoadShortFromMemory(pos + 1);
                                 offset += 2;
                                 var cond = (CompareCondition)((Memory[pos] >> 3) & 0b111) switch
                                 {
@@ -1548,13 +1637,14 @@ public class Intel8008
                                     CompareCondition.C => Cc.Cy,
                                     CompareCondition.PO => !Cc.P,
                                     CompareCondition.PE => Cc.P,
-                                    CompareCondition.P => Cc.S,
-                                    CompareCondition.N => !Cc.S,
+                                    CompareCondition.P => !Cc.S,
+                                    CompareCondition.N => Cc.S,
                                     _ => throw new InvalidConstraintException("invalid cmp instruction")
                                 };
                                 if (cond)
                                 {
                                     PC = addr;
+                                    JmpWasExecuted = true;
                                 }
                             }
                                 break;
@@ -1571,8 +1661,8 @@ public class Intel8008
                                     CompareCondition.C => Cc.Cy,
                                     CompareCondition.PO => !Cc.P,
                                     CompareCondition.PE => Cc.P,
-                                    CompareCondition.P => Cc.S,
-                                    CompareCondition.N => !Cc.S,
+                                    CompareCondition.P => !Cc.S,
+                                    CompareCondition.N => Cc.S,
                                     _ => throw new InvalidConstraintException("invalid cmp instruction")
                                 };
                                 if (cond)
@@ -1580,6 +1670,7 @@ public class Intel8008
                                     SP -= 2;
                                     WriteToMemory(SP, PC);
                                     PC = addr;
+                                    JmpWasExecuted = true;
                                 }
                             }
                                 break;
@@ -1591,7 +1682,7 @@ public class Intel8008
                                     Rp.BC => BC,
                                     Rp.DE => DE,
                                     Rp.HL => HL,
-                                    Rp.SP => SP,
+                                    Rp.SP => PSW,
                                     _ => throw new InvalidConstraintException("invalid register")
                                 };
                                 SP -= 2;
@@ -1607,16 +1698,16 @@ public class Intel8008
                                 switch ((Alu)((Memory[pos] >> 3) & 0b111))
                                 {
                                     case Alu.ADD:
-                                        A = AluAdd(A, data);
+                                        A = AluAdd(A, data, true);
                                         break;
                                     case Alu.ADC:
-                                        A = AluAdd(A, data, Cc.Cy);
+                                        A = AluAdd(A, data, true, Flags.ALL, Cc.Cy);
                                         break;
                                     case Alu.SUB:
-                                        A = AluSub(A, data);
+                                        A = AluSub(A, data, true);
                                         break;
                                     case Alu.SBB:
-                                        A = AluSub(A, data, Cc.Cy);
+                                        A = AluSub(A, data, true, Flags.ALL, Cc.Cy);
                                         break;
                                     case Alu.ANA:
                                         A = AluAnd(A, data);
@@ -1628,7 +1719,7 @@ public class Intel8008
                                         A = AluOr(A, data);
                                         break;
                                     case Alu.CMP:
-                                        A = AluCmp(A, data);
+                                        AluCmp(A, data);
                                         break;
                                 }
                             }
@@ -1639,7 +1730,8 @@ public class Intel8008
                                 var v = (byte)((LoadByteFromMemory(pos) >> 3) & 0b111);
                                 SP -= 2;
                                 WriteToMemory(SP, PC);
-                                PC = (short)(v * 8);
+                                PC = (ushort)(v * 8);
+                                JmpWasExecuted = true;
                             }
                                 break;
                             default: throw new InvalidConstraintException($"invalid instruction 0x{Memory[pos]:X}");
@@ -1652,45 +1744,63 @@ public class Intel8008
         }
     }
 
+    private ushort PSW
+    {
+        get => (ushort)((A << 8) | Cc.GetAsValue());
+        set
+        {
+            A = (byte)((value >> 8) & 0xFF);
+            Cc.SetAsValue((byte)(value & 0xFF));
+        }
+    }
+
     public Intel8008(string pathToFile) : this(File.ReadAllBytes(pathToFile))
     {
     }
 
-    public short AluAddX(short a, short b, bool c = false)
+    private ushort AluAddX(ushort a, ushort b, bool setFlags, Flags flags = Flags.ALL, bool c = false)
     {
-        var l = AluAdd((byte)(a & 0xFF), (byte)(b & 0xFF), c);
-        var h = AluAdd((byte)((a >> 8) & 0xFF), (byte)((b >> 8) & 0xFF), Cc.Cy);
-        return (short)((h << 8) | l);
+        var l = AluAdd((byte)(a & 0xFF), (byte)(b & 0xFF), setFlags, flags, c);
+        var h = AluAdd((byte)((a >> 8) & 0xFF), (byte)((b >> 8) & 0xFF), setFlags, flags, Cc.Cy);
+        return (ushort)((h << 8) | l);
     }
 
-    public short AluSubX(short a, short b, bool c = false)
+    private ushort AluSubX(ushort a, ushort b, bool setFlags, Flags flags = Flags.ALL, bool c = false)
     {
-        var l = AluSub((byte)(a & 0xFF), (byte)(b & 0xFF), c);
-        var h = AluSub((byte)((a >> 8) & 0xFF), (byte)((b >> 8) & 0xFF), Cc.Cy);
-        return (short)((h << 8) | l);
+        var l = AluSub((byte)(a & 0xFF), (byte)(b & 0xFF), setFlags, flags, c);
+        var h = AluSub((byte)((a >> 8) & 0xFF), (byte)((b >> 8) & 0xFF), setFlags, flags, Cc.Cy);
+        return (ushort)((h << 8) | l);
     }
 
-    public byte AluAdd(byte a, byte b, bool c = false)
+    private byte AluAdd(byte a, byte b, bool setFlags, Flags flags = Flags.ALL, bool c = false)
     {
         var res = (ushort)(a + b + (c ? 1 : 0));
-        SetArithFlags(res);
+        if (setFlags)
+        {
+            SetArithFlags(res, flags);
+        }
+
         Cc.Ac = (a & 0xF) + (b & 0xF) > 0xF;
         return (byte)(res & 0xFF);
     }
 
-    public byte AluCmp(byte a, byte b) => AluSub(a, b);
+    private byte AluCmp(byte a, byte b) => AluSub(a, b, true);
 
-    public byte AluSub(byte a, byte b, bool c = false)
+    private byte AluSub(byte a, byte b, bool setFlags, Flags flags = Flags.ALL, bool c = false)
     {
         var res = (ushort)(a - b - (c ? 1 : 0));
-        SetArithFlags(res);
+        if (setFlags)
+        {
+            SetArithFlags(res, flags);
+        }
+
         Cc.Ac = (a & 0xF) < (b & 0xF);
         return (byte)(res & 0xFF);
     }
 
-    public byte AluAnd(byte a, byte b) => AluLogical((v1, v2) => (byte)(v1 & v2), a, b);
-    public byte AluXor(byte a, byte b) => AluLogical((v1, v2) => (byte)(v1 ^ v2), a, b);
-    public byte AluOr(byte a, byte b) => AluLogical((v1, v2) => (byte)(v1 | v2), a, b);
+    private byte AluAnd(byte a, byte b) => AluLogical((v1, v2) => (byte)(v1 & v2), a, b);
+    private byte AluXor(byte a, byte b) => AluLogical((v1, v2) => (byte)(v1 ^ v2), a, b);
+    private byte AluOr(byte a, byte b) => AluLogical((v1, v2) => (byte)(v1 | v2), a, b);
 
     private byte AluLogical(Func<byte, byte, byte> op, byte a, byte b)
     {
@@ -1708,12 +1818,27 @@ public class Intel8008
         Ac = 0;
     }
 
-    private void SetArithFlags(ushort res)
+    private void SetArithFlags(ushort res, Flags flags)
     {
-        Z = (byte)(res & 0xFF);
-        S = (byte)(res & 0xFF);
-        P = (byte)(res & 0xFF);
-        Cc.Cy = res > 0xFF;
+        if ((flags & Flags.Z) != 0)
+        {
+            Z = (byte)(res & 0xFF);
+        }
+
+        if ((flags & Flags.S) != 0)
+        {
+            S = (byte)(res & 0xFF);
+        }
+
+        if ((flags & Flags.P) != 0)
+        {
+            P = (byte)(res & 0xFF);
+        }
+
+        if ((flags & Flags.CY) != 0)
+        {
+            Cc.Cy = res > 0xFF;
+        }
     }
 
     public Intel8008() : this(Array.Empty<byte>())
@@ -1722,18 +1847,18 @@ public class Intel8008
 
     private void WriteToMemory(int addr, byte value)
     {
-        Memory[(short)addr] = value;
+        Memory[(ushort)addr] = value;
     }
 
-    private void WriteToMemory(int addr, short value)
+    private void WriteToMemory(int addr, ushort value)
     {
         WriteToMemory(addr, (byte)(value & 0xFF));
         WriteToMemory(addr + 1, (byte)((value >> 8) & 0xFF));
     }
 
-    private short LoadShortFromMemory(int addr)
+    private ushort LoadShortFromMemory(int addr)
     {
-        return (short)((LoadByteFromMemory(addr + 1) << 8) | LoadByteFromMemory(addr));
+        return (ushort)((LoadByteFromMemory(addr + 1) << 8) | LoadByteFromMemory(addr));
     }
 
     private byte LoadByteFromMemory(int addr)
@@ -1741,7 +1866,7 @@ public class Intel8008
         return Memory[addr];
     }
 
-    private void SetPin(Pin pin, bool value)
+    public void SetPin(Pin pin, bool value)
     {
         switch (pin)
         {
@@ -1787,33 +1912,19 @@ public class Intel8008
         }
     }
 
-    private bool GetPin(Pin pin)
+    public bool GetPin(Pin pin)
     {
-        switch (pin)
+        return pin switch
         {
-            case Pin.D4:
-            case Pin.D5:
-            case Pin.D6:
-            case Pin.D7:
-            case Pin.D3:
-            case Pin.D2:
-            case Pin.D1:
-            case Pin.D0:
-            case Pin.RESET:
-            case Pin.HOLD:
-            case Pin.INT:
-            case Pin.PHASE2:
-            case Pin.PHASE1:
-            case Pin.READY:
-                return ((pins >> (int)(pin - 1)) & 0b1) == 1;
-            default:
-                throw new InvalidConstraintException("Invalid pin: pin is not readable");
-        }
+            Pin.D4 or Pin.D5 or Pin.D6 or Pin.D7 or Pin.D3 or Pin.D2 or Pin.D1 or Pin.D0 or Pin.RESET or Pin.HOLD
+                or Pin.INT or Pin.PHASE2 or Pin.PHASE1 or Pin.READY => ((pins >> (int)(pin - 1)) & 0b1) == 1,
+            _ => throw new InvalidConstraintException("Invalid pin: pin is not readable")
+        };
     }
 
     private void PushState()
     {
-        states.Push(new State(cycles, pins, ports.ToArray(), A, BC, DE, HL, SP, PC, Cc.GetAsValue(), Memory.ToArray()));
+        states.Push(new State(cycles, pins, Ports.ToArray(), A, BC, DE, HL, SP, PC, Cc.GetAsValue(), Memory.ToArray()));
     }
 
     private void PopState()
@@ -1821,7 +1932,7 @@ public class Intel8008
         var state = states.Pop();
         cycles = state.cycles;
         pins = state.pins;
-        ports = state.ports;
+        Ports = state.ports;
         A = state.A;
         BC = state.BC;
         DE = state.DE;
@@ -1830,5 +1941,95 @@ public class Intel8008
         PC = state.PC;
         Cc.SetAsValue(state.ConditionState);
         state.mem.CopyTo(Memory, 0);
+    }
+
+    public static void RunTestSuite(bool cacheFile = false)
+    {
+        byte[] f = [];
+        var desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+        var filePath = Path.Combine(desktopPath, "cpudiag.bin");
+        if (File.Exists(filePath))
+        {
+            Console.Out.WriteLine("Using cached cpudiag.bin");
+            f = File.ReadAllBytes(filePath);
+        }
+        else
+        {
+            Console.Out.WriteLine("Downloading cpudiag.bin");
+            using var client = new HttpClient();
+            try
+            {
+                f = client.GetByteArrayAsync("http://www.emulator101.com/files/cpudiag.bin").Result;
+
+                // Optionally cache the file on the desktop
+                if (cacheFile)
+                {
+                    File.WriteAllBytes(filePath, f);
+                }
+            }
+            catch (HttpRequestException e)
+            {
+                Console.WriteLine("Error downloading file: " + e.Message);
+                return;
+            }
+        }
+
+        var testCpu = new Intel8008().LoadMemory(f, 0x100)
+            .LoadMemory([0xc3, 0x00, 0x01], 0)
+            .LoadMemory([0x07], 368)
+            .LoadMemory([0xc3, 0xc2, 0x05], 0x59c);
+        do
+        {
+            /* on error:
+             * 0x00C5: CALL 0x689
+             * 0x0589: LXI HL, 0x018B
+             * 0x058C: CALL 0x145
+             * 0x0045: PUSH DE
+             * 0x0046: XCHG
+             * 0x0047: MVI C, 0x09
+             * 0x0049: CALL 0x5
+             */
+            uint c = 0;
+            if (testCpu.PC == 0x689)
+            {
+                Console.Out.WriteLine("ERROR IN PREV INSTR");
+                while (true)
+                {
+                }
+            }
+
+            var dismMsg = testCpu.GetCurrentInstrAsString();
+        } while (testCpu.run(1, true));
+    }
+
+    public string GetCurrentInstrAsString()
+    {
+        uint c = 0;
+        var dismMsg = Disassemble(PC, out _, ref c).Split("//")[0];
+
+        return new StringBuilder().Append("0x")
+            .Append($"{(PC >= 0x100 ? PC - 0x100 : PC):X4}")
+            .Append(": 0x")
+            .Append($"{Memory[PC]:X2}")
+            .Append(" - ")
+            .Append(((Opcode)Memory[PC]).ToString())
+            .Append(" - ")
+            .Append(dismMsg)
+            .Append(" - A = 0x")
+            .Append($"{A:X2}")
+            .Append(", CY = ")
+            .Append(Cy)
+            .Append(", S = ")
+            .Append(S)
+            .Append(", Z = ")
+            .Append(Z)
+            .Append(", P = ")
+            .Append(P)
+            .ToString();
+    }
+
+    public ArraySegment<byte> GetMemory(ushort start, ushort end)
+    {
+        return new ArraySegment<byte>(Memory, start, end - start + 1);
     }
 }
