@@ -1841,6 +1841,12 @@ public class Intel8008
         }
     }
 
+    public void GenerateInterrupt(int num)
+    {
+        WriteToMemory(SP, PC);
+        PC = (ushort)(8 * num);
+    }
+
     public Intel8008() : this(Array.Empty<byte>())
     {
     }
@@ -1914,12 +1920,7 @@ public class Intel8008
 
     public bool GetPin(Pin pin)
     {
-        return pin switch
-        {
-            Pin.D4 or Pin.D5 or Pin.D6 or Pin.D7 or Pin.D3 or Pin.D2 or Pin.D1 or Pin.D0 or Pin.RESET or Pin.HOLD
-                or Pin.INT or Pin.PHASE2 or Pin.PHASE1 or Pin.READY => ((pins >> (int)(pin - 1)) & 0b1) == 1,
-            _ => throw new InvalidConstraintException("Invalid pin: pin is not readable")
-        };
+        return ((pins >> (int)(pin - 1)) & 0b1) == 1;
     }
 
     private void PushState()

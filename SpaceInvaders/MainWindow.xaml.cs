@@ -55,7 +55,7 @@ public partial class MainWindow : Window
         _updateFramebufferTimer = new DispatcherTimer();
         _updateCpuTimer = new DispatcherTimer();
 
-        const string prefix = @"C:\Users\Nils_Eisenach\Desktop\dev\CS\Intel8008Tools\invaders";
+        const string prefix = @"C:\Users\NilEis\Desktop\dev\CS\Intel8008Tools\invaders";
         _cpu.LoadMemory(Path.Join(prefix, "invaders.h"), 0)
             .LoadMemory(Path.Join(prefix, "invaders.g"), 0x800)
             .LoadMemory(Path.Join(prefix, "invaders.f"), 0x1000)
@@ -87,7 +87,6 @@ public partial class MainWindow : Window
         _updateFramebufferTimer.Start();
         _updateCpuTimer.Start();
         return;
-        // todo: http://www.emulator101.com/interrupts.html
 
         void OnUpdateCpu(object? sender, EventArgs e)
         {
@@ -101,6 +100,11 @@ public partial class MainWindow : Window
 
         void OnUpdateFramebuffer(object? sender, EventArgs e)
         {
+            if (_cpu.GetPin(Pin.INTE))
+            {
+                _cpu.GenerateInterrupt(2);
+            }
+
             var buffer = _cpu.GetMemory(0x2400, 0x3FFF).ToArray();
             var bmp = BitmapSource.Create(height, width, 0, 0, PixelFormats.BlackWhite, null, buffer, height / 8);
             Image.Source = bmp;
