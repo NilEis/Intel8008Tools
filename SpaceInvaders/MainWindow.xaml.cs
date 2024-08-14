@@ -55,7 +55,7 @@ public partial class MainWindow : Window
         _updateFramebufferTimer = new DispatcherTimer();
         _updateCpuTimer = new DispatcherTimer();
 
-        const string prefix = @"C:\Users\NilEis\Desktop\dev\CS\Intel8008Tools\invaders";
+        const string prefix = @"C:\Users\Nils_Eisenach\Desktop\dev\CS\Intel8008Tools\invaders";
         _cpu.LoadMemory(Path.Join(prefix, "invaders.h"), 0)
             .LoadMemory(Path.Join(prefix, "invaders.g"), 0x800)
             .LoadMemory(Path.Join(prefix, "invaders.f"), 0x1000)
@@ -68,11 +68,15 @@ public partial class MainWindow : Window
         _cpu.Ports[3] = 0;
         _cpu.inPorts[3] = _ =>
         {
+            Console.Out.WriteLine("Use shift reg");
             var shiftRegV = sR.Reg;
             return shiftRegV;
         };
         _cpu.outPorts[2] = (_, b) => { sR.offset = (byte)(b & 0x07); };
-        _cpu.outPorts[4] = (_, b) => { sR.Reg = b; };
+        _cpu.outPorts[3] = (_, b) =>
+        {
+            sR.Reg = b;
+        };
 
         KeyDown += (obj, e) => { SetKey(e.Key, true); };
         KeyUp += (obj, e) => { SetKey(e.Key, false); };
@@ -92,7 +96,6 @@ public partial class MainWindow : Window
         {
             var dt = (uint)(DateTime.Now.Millisecond * 1000 + DateTime.Now.Microsecond) -
                      (_lt.milli * 1000 + _lt.micro);
-            //Console.Out.WriteLine(cpu.GetCurrentInstrAsString());
             _cpu.run((uint)(dt / (1_000_000.0 / 2_000_000.0)));
             _lt.milli = (uint)DateTime.Now.Millisecond;
             _lt.micro = (uint)DateTime.Now.Microsecond;

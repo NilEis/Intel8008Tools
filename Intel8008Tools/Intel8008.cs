@@ -722,7 +722,7 @@ public class Intel8008
                         var addr = (short)((mem[pos + 2] << 8) | mem[pos + 1]);
                         offset += 2;
                         res =
-                            $"CALL 0x{addr:X} // SP -= 2; Memory[SP] = (byte)(PC&0xFF); Memory[SP+1] = (byte)((PC>>8)&0xFF); PC = 0x{addr:X}";
+                            $"CALL 0x{addr:X4} // SP -= 2; Memory[SP] = (byte)(PC&0xFF); Memory[SP+1] = (byte)((PC>>8)&0xFF); PC = 0x{addr:X}";
                     }
                         break;
                     case 0b11001001:
@@ -956,8 +956,10 @@ public class Intel8008
     {
         var startCycles = cycles;
         short offset;
+        var cout = new StringBuilder();
         do
         {
+            cout.AppendLine(GetCurrentInstrAsString());
             if (safe)
             {
                 ExecuteSafe(PC, out offset, cpudiag);
@@ -973,6 +975,7 @@ public class Intel8008
             }
         } while (offset != 0 && (startCycles - cycles) <= numCycles);
 
+        Console.Out.WriteLine(cout.ToString());
         return offset != 0;
     }
 
@@ -1160,13 +1163,13 @@ public class Intel8008
                                         BC = AluAddX(BC, 1, false, Flags.NONE);
                                         break;
                                     case Rp.DE:
-                                        DE = AluAddX(BC, 1, false, Flags.NONE);
+                                        DE = AluAddX(DE, 1, false, Flags.NONE);
                                         break;
                                     case Rp.HL:
-                                        DE = AluAddX(BC, 1, false, Flags.NONE);
+                                        HL = AluAddX(HL, 1, false, Flags.NONE);
                                         break;
                                     case Rp.SP:
-                                        DE = AluAddX(BC, 1, false, Flags.NONE);
+                                        SP = AluAddX(SP, 1, false, Flags.NONE);
                                         break;
                                 }
                             }
@@ -1469,8 +1472,7 @@ public class Intel8008
                 {
                     case 0b11111011:
                         cycles += 4;
-                        SetPin(Pin.INTE, true);
-                        Console.Out.WriteLine("Enable interrupts");
+                        EnableInterrupts();
                         break;
                     case 0b11111001:
                         cycles += 5;
@@ -1478,8 +1480,7 @@ public class Intel8008
                         break;
                     case 0b11110011:
                         cycles += 4;
-                        SetPin(Pin.INTE, false);
-                        Console.Out.WriteLine("Disable interrupts");
+                        DisableInterrupts();
                         break;
                     case 0b11101011:
                     {
@@ -1552,7 +1553,7 @@ public class Intel8008
                                 break;
                             default:
                                 SP -= 2;
-                                WriteToMemory(SP, PC);
+                                WriteToMemory(SP, (ushort)(PC + 3));
                                 PC = addr;
                                 JmpWasExecuted = true;
                                 break;
@@ -1744,6 +1745,18 @@ public class Intel8008
         }
     }
 
+    private void EnableInterrupts()
+    {
+        SetPin(Pin.INTE, true);
+        Console.Out.WriteLine("Enable interrupts");
+    }
+
+    private void DisableInterrupts()
+    {
+        SetPin(Pin.INTE, false);
+        Console.Out.WriteLine("Disable interrupts");
+    }
+
     private ushort PSW
     {
         get => (ushort)((A << 8) | Cc.GetAsValue());
@@ -1843,8 +1856,10 @@ public class Intel8008
 
     public void GenerateInterrupt(int num)
     {
+        Console.Out.WriteLine($"Int {num}");
         WriteToMemory(SP, PC);
         PC = (ushort)(8 * num);
+        DisableInterrupts();
     }
 
     public Intel8008() : this(Array.Empty<byte>())
@@ -1853,7 +1868,18 @@ public class Intel8008
 
     private void WriteToMemory(int addr, byte value)
     {
-        Memory[(ushort)addr] = value;
+        switch (addr)
+        {
+            case < 0x2000:
+                Console.Out.WriteLine($"Writing ROM not allowed {addr}\n");
+                return;
+            case >= 0x4000:
+                Console.Out.WriteLine($"Writing out of Space Invaders RAM not allowed {addr}\n");
+                return;
+            default:
+                Memory[(ushort)addr] = value;
+                break;
+        }
     }
 
     private void WriteToMemory(int addr, ushort value)
@@ -1906,10 +1932,10 @@ public class Intel8008
             case Pin.A13:
             case Pin.A14:
             case Pin.A11:
-                pins &= ~((ulong)1 << (int)pin);
+                pins &= ~((ulong)1 << (int)(pin - 1));
                 if (value)
                 {
-                    pins |= (ulong)1 << (int)pin;
+                    pins |= (ulong)1 << (int)(pin - 1);
                 }
 
                 break;
@@ -2008,24 +2034,30 @@ public class Intel8008
         uint c = 0;
         var dismMsg = Disassemble(PC, out _, ref c).Split("//")[0];
 
-        return new StringBuilder().Append("0x")
-            .Append($"{(PC >= 0x100 ? PC - 0x100 : PC):X4}")
+        return new StringBuilder()
+            .Append($"{iterations} - ")
+            .Append("0x")
+            .Append($"{PC:X4}")
             .Append(": 0x")
             .Append($"{Memory[PC]:X2}")
-            .Append(" - ")
-            .Append(((Opcode)Memory[PC]).ToString())
+            // .Append(" - ")
+            // .Append(((Opcode)Memory[PC]).ToString())
             .Append(" - ")
             .Append(dismMsg)
             .Append(" - A = 0x")
             .Append($"{A:X2}")
-            .Append(", CY = ")
-            .Append(Cy)
-            .Append(", S = ")
-            .Append(S)
-            .Append(", Z = ")
-            .Append(Z)
-            .Append(", P = ")
-            .Append(P)
+            .Append(", CC = ")
+            .Append($"{Cc.GetAsValue():b8}")
+            .Append(", BC = ")
+            .Append($"{BC:X4}")
+            .Append(", DE = ")
+            .Append($"{DE:X4}")
+            .Append(", HL = ")
+            .Append($"{HL:X4}")
+            .Append(", M = ")
+            .Append($"{M:X2}")
+            .Append(", SP = ")
+            .Append($"{SP:X2}")
             .ToString();
     }
 
