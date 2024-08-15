@@ -9,4 +9,4 @@ var cyc = (uint)0;
 // {
 //     Console.Out.WriteLine(Intel8008.Disassemble(0, [(byte)i, 0, 0], out var offset, ref cyc));
 // }
-Intel8008.RunTestSuite(true);
+Intel8008.RunTestSuite(true, false);

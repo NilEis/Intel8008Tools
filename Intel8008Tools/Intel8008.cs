@@ -952,7 +952,7 @@ public class Intel8008
         return res;
     }
 
-    public bool run(uint numCycles = 1, bool cpudiag = false, bool safe = false, bool print_debug = false)
+    public bool run(bool cpudiag = false, bool safe = false, bool print_debug = false)
     {
         var startCycles = cycles;
         short offset;
@@ -962,27 +962,24 @@ public class Intel8008
             cout = new StringBuilder();
         }
 
-        do
+        if (print_debug)
         {
-            if (print_debug)
-            {
-                cout!.AppendLine(GetCurrentInstrAsString());
-            }
+            cout!.AppendLine(GetCurrentInstrAsString());
+        }
 
-            if (safe)
-            {
-                ExecuteSafe(PC, out offset, cpudiag);
-            }
-            else
-            {
-                Execute(PC, out offset, cpudiag);
-            }
+        if (safe)
+        {
+            ExecuteSafe(PC, out offset, cpudiag);
+        }
+        else
+        {
+            Execute(PC, out offset, cpudiag);
+        }
 
-            if (!JmpWasExecuted)
-            {
-                PC += (ushort)offset;
-            }
-        } while (offset != 0 && (startCycles - cycles) <= numCycles);
+        if (!JmpWasExecuted)
+        {
+            PC += (ushort)offset;
+        }
 
         if (print_debug)
         {
@@ -1543,12 +1540,18 @@ public class Intel8008
                                     case 9:
                                     {
                                         var offs = DE;
+                                        var builder = new StringBuilder();
                                         for (var i = offs + 3; (char)Memory[i] != '$'; i++)
                                         {
-                                            Console.Out.Write((char)Memory[i]);
+                                            builder.Append((char)Memory[i]);
                                         }
 
-                                        Console.Out.WriteLine('\n');
+                                        Console.Out.WriteLine(builder.ToString());
+                                        if (builder.ToString().Contains("CPU IS OPERATIONAL"))
+                                        {
+                                            offset = -1;
+                                        }
+
                                         break;
                                     }
                                     case 2:
@@ -1988,7 +1991,7 @@ public class Intel8008
         state.mem.CopyTo(Memory, 0);
     }
 
-    public static void RunTestSuite(bool cacheFile = false)
+    public static void RunTestSuite(bool cacheFile = false, bool print_debug = false)
     {
         byte[] f = [];
         var desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
@@ -2042,9 +2045,7 @@ public class Intel8008
                 {
                 }
             }
-
-            var dismMsg = testCpu.GetCurrentInstrAsString();
-        } while (testCpu.run(1, true, false, true));
+        } while (testCpu.run(true, false, print_debug));
     }
 
     public string GetCurrentInstrAsString()
