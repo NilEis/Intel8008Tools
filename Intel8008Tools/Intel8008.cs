@@ -952,14 +952,23 @@ public class Intel8008
         return res;
     }
 
-    public bool run(uint numCycles = 1, bool cpudiag = false, bool safe = false)
+    public bool run(uint numCycles = 1, bool cpudiag = false, bool safe = false, bool print_debug = false)
     {
         var startCycles = cycles;
         short offset;
-        var cout = new StringBuilder();
+        StringBuilder? cout = null;
+        if (print_debug)
+        {
+            cout = new StringBuilder();
+        }
+
         do
         {
-            cout.AppendLine(GetCurrentInstrAsString());
+            if (print_debug)
+            {
+                cout!.AppendLine(GetCurrentInstrAsString());
+            }
+
             if (safe)
             {
                 ExecuteSafe(PC, out offset, cpudiag);
@@ -975,7 +984,11 @@ public class Intel8008
             }
         } while (offset != 0 && (startCycles - cycles) <= numCycles);
 
-        Console.Out.WriteLine(cout.ToString());
+        if (print_debug)
+        {
+            Console.Out.WriteLine(cout!.ToString());
+        }
+
         return offset != 0;
     }
 
@@ -1108,7 +1121,7 @@ public class Intel8008
                     case 0b00111111:
                     {
                         cycles += 4;
-                        Cy = (byte)~Cy;
+                        Cc.Cy = !Cc.Cy;
                     }
                         break;
                     default:
@@ -1142,10 +1155,10 @@ public class Intel8008
                                 switch ((Rp)((Memory[pos] >> 4) & 0b11))
                                 {
                                     case Rp.BC:
-                                        BC = A;
+                                        WriteToMemory(BC, A);
                                         break;
                                     case Rp.DE:
-                                        DE = A;
+                                        WriteToMemory(DE, A);
                                         break;
                                     case Rp.HL:
                                         throw new UnreachableException("INVALID_REGISTER -> HL");
@@ -1217,13 +1230,13 @@ public class Intel8008
                                         BC = AluSubX(BC, 1, false, Flags.NONE);
                                         break;
                                     case Rp.DE:
-                                        DE = AluSubX(BC, 1, false, Flags.NONE);
+                                        DE = AluSubX(DE, 1, false, Flags.NONE);
                                         break;
                                     case Rp.HL:
-                                        HL = AluSubX(BC, 1, false, Flags.NONE);
+                                        HL = AluSubX(HL, 1, false, Flags.NONE);
                                         break;
                                     case Rp.SP:
-                                        SP = AluSubX(BC, 1, false, Flags.NONE);
+                                        SP = AluSubX(SP, 1, false, Flags.NONE);
                                         break;
                                 }
                             }
@@ -1529,10 +1542,7 @@ public class Intel8008
                                 {
                                     case 9:
                                     {
-                                        Console.Out.WriteLine(
-                                            $"0x{pos:X4}: {Memory[pos]:X}{Memory[pos + 1]:X2}{Memory[pos + 2]:X2}");
                                         var offs = DE;
-                                        Console.Out.WriteLine($"offset: {offs:X}");
                                         for (var i = offs + 3; (char)Memory[i] != '$'; i++)
                                         {
                                             Console.Out.Write((char)Memory[i]);
@@ -1669,7 +1679,7 @@ public class Intel8008
                                 if (cond)
                                 {
                                     SP -= 2;
-                                    WriteToMemory(SP, PC);
+                                    WriteToMemory(SP, (ushort)(PC + 3));
                                     PC = addr;
                                     JmpWasExecuted = true;
                                 }
@@ -1748,13 +1758,13 @@ public class Intel8008
     private void EnableInterrupts()
     {
         SetPin(Pin.INTE, true);
-        Console.Out.WriteLine("Enable interrupts");
+        //Console.Out.WriteLine("Enable interrupts");
     }
 
     private void DisableInterrupts()
     {
         SetPin(Pin.INTE, false);
-        Console.Out.WriteLine("Disable interrupts");
+        //Console.Out.WriteLine("Disable interrupts");
     }
 
     private ushort PSW
@@ -1774,14 +1784,20 @@ public class Intel8008
     private ushort AluAddX(ushort a, ushort b, bool setFlags, Flags flags = Flags.ALL, bool c = false)
     {
         var l = AluAdd((byte)(a & 0xFF), (byte)(b & 0xFF), setFlags, flags, c);
-        var h = AluAdd((byte)((a >> 8) & 0xFF), (byte)((b >> 8) & 0xFF), setFlags, flags, Cc.Cy);
+        var h = AluAdd((byte)((a >> 8) & 0xFF), (byte)((b >> 8) & 0xFF), setFlags, flags, l < (a & 0xFF));
         return (ushort)((h << 8) | l);
     }
 
     private ushort AluSubX(ushort a, ushort b, bool setFlags, Flags flags = Flags.ALL, bool c = false)
     {
-        var l = AluSub((byte)(a & 0xFF), (byte)(b & 0xFF), setFlags, flags, c);
+        var tmp = Cc.Cy;
+        var l = AluSub((byte)(a & 0xFF), (byte)(b & 0xFF), true, flags | Flags.CY);
         var h = AluSub((byte)((a >> 8) & 0xFF), (byte)((b >> 8) & 0xFF), setFlags, flags, Cc.Cy);
+        if (!flags.HasFlag(Flags.CY))
+        {
+            Cc.Cy = tmp;
+        }
+
         return (ushort)((h << 8) | l);
     }
 
@@ -1856,7 +1872,8 @@ public class Intel8008
 
     public void GenerateInterrupt(int num)
     {
-        Console.Out.WriteLine($"Int {num}");
+        //Console.Out.WriteLine($"Int {num}");
+        SP -= 2;
         WriteToMemory(SP, PC);
         PC = (ushort)(8 * num);
         DisableInterrupts();
@@ -1868,17 +1885,18 @@ public class Intel8008
 
     private void WriteToMemory(int addr, byte value)
     {
-        switch (addr)
+        Memory[(ushort)addr] = value;
+        if (false)
         {
-            case < 0x2000:
-                Console.Out.WriteLine($"Writing ROM not allowed {addr}\n");
-                return;
-            case >= 0x4000:
-                Console.Out.WriteLine($"Writing out of Space Invaders RAM not allowed {addr}\n");
-                return;
-            default:
-                Memory[(ushort)addr] = value;
-                break;
+            switch (addr)
+            {
+                case < 0x2000:
+                    Console.Out.WriteLine($"Writing ROM not allowed {addr}\n");
+                    return;
+                case >= 0x4000:
+                    Console.Out.WriteLine($"Writing out of Space Invaders RAM not allowed {addr}\n");
+                    return;
+            }
         }
     }
 
@@ -2026,7 +2044,7 @@ public class Intel8008
             }
 
             var dismMsg = testCpu.GetCurrentInstrAsString();
-        } while (testCpu.run(1, true));
+        } while (testCpu.run(1, true, false, true));
     }
 
     public string GetCurrentInstrAsString()

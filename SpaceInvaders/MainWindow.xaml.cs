@@ -51,11 +51,14 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        Image.RenderTransform = new RotateTransform(90, height / 2, width / 2);
+        var transformGroup = new TransformGroup();
+        Image.RenderTransform = transformGroup;
+        transformGroup.Children.Add(new RotateTransform(-90, height / 2, width / 2));
+        // transformGroup.Children.Add(new ScaleTransform(1, -1, height / 2, width / 2));
         _updateFramebufferTimer = new DispatcherTimer();
         _updateCpuTimer = new DispatcherTimer();
 
-        const string prefix = @"C:\Users\Nils_Eisenach\Desktop\dev\CS\Intel8008Tools\invaders";
+        const string prefix = @"C:\Users\NilEis\Desktop\dev\CS\Intel8008Tools\invaders";
         _cpu.LoadMemory(Path.Join(prefix, "invaders.h"), 0)
             .LoadMemory(Path.Join(prefix, "invaders.g"), 0x800)
             .LoadMemory(Path.Join(prefix, "invaders.f"), 0x1000)
@@ -63,18 +66,18 @@ public partial class MainWindow : Window
             ;
 
         _cpu.Ports[0] = 0b00001110;
-        _cpu.Ports[1] = 0b00001000;
-        _cpu.Ports[2] = 0b10000000 | 0b00;
+        _cpu.Ports[1] = 0b00001101;
+        _cpu.Ports[2] = 0b00000000 | 0b00;
         _cpu.Ports[3] = 0;
         _cpu.inPorts[3] = _ =>
         {
-            Console.Out.WriteLine("Use shift reg");
             var shiftRegV = sR.Reg;
             return shiftRegV;
         };
-        _cpu.outPorts[2] = (_, b) => { sR.offset = (byte)(b & 0x07); };
-        _cpu.outPorts[3] = (_, b) =>
+        _cpu.outPorts[2] = (_, b) => { sR.offset = (byte)(b & 0b00000111); };
+        _cpu.outPorts[4] = (_, b) =>
         {
+            Console.Out.WriteLine("read shift register");
             sR.Reg = b;
         };
 
@@ -108,10 +111,26 @@ public partial class MainWindow : Window
                 _cpu.GenerateInterrupt(2);
             }
 
-            var buffer = _cpu.GetMemory(0x2400, 0x3FFF).ToArray();
+            var tmpBuffer = _cpu.GetMemory(0x2400, 0x3FFF).ToArray();
+            var buffer = new byte[tmpBuffer.Length];
+            for (var i = 0; i < tmpBuffer.Length; i++)
+            {
+                buffer[i] = reverse(tmpBuffer[i]);
+            }
+
             var bmp = BitmapSource.Create(height, width, 0, 0, PixelFormats.BlackWhite, null, buffer, height / 8);
             Image.Source = bmp;
         }
+    }
+
+    private static byte reverse(byte n)
+    {
+        byte[] lookup =
+        [
+            0x0, 0x8, 0x4, 0xc, 0x2, 0xa, 0x6, 0xe,
+            0x1, 0x9, 0x5, 0xd, 0x3, 0xb, 0x7, 0xf
+        ];
+        return (byte)((lookup[n & 0b1111] << 4) | lookup[n >> 4]);
     }
 
     private void SetKey(Key k, bool pressed)
@@ -120,12 +139,15 @@ public partial class MainWindow : Window
         {
             case Key.Space:
                 _cpu.Ports[1] = (byte)((_cpu.Ports[1] & 0b11101111) | (pressed ? 0b00010000 : 0b00000000));
+                _cpu.Ports[0] = (byte)((_cpu.Ports[0] & 0b11101111) | (pressed ? 0b00010000 : 0b00000000));
                 break;
             case Key.Left:
                 _cpu.Ports[1] = (byte)((_cpu.Ports[1] & 0b11011111) | (pressed ? 0b00100000 : 0b00000000));
+                _cpu.Ports[0] = (byte)((_cpu.Ports[0] & 0b11011111) | (pressed ? 0b00100000 : 0b00000000));
                 break;
             case Key.Right:
                 _cpu.Ports[1] = (byte)((_cpu.Ports[1] & 0b10111111) | (pressed ? 0b01000000 : 0b00000000));
+                _cpu.Ports[0] = (byte)((_cpu.Ports[0] & 0b10111111) | (pressed ? 0b01000000 : 0b00000000));
                 break;
             default:
                 break;
