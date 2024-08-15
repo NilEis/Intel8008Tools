@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using Intel8008Tools;
 
 namespace SpaceInvaders;
@@ -14,6 +15,8 @@ namespace SpaceInvaders;
 public partial class MainWindow : Window
 {
     private readonly Intel8008 _cpu = new();
+    private readonly DispatcherTimer _updateFramebufferTimer;
+    private readonly DispatcherTimer _updateCpuTimer;
     private const int width = 224;
     private const int height = 256;
     private readonly byte[] buffer = new byte[width * height / 8];
@@ -34,10 +37,12 @@ public partial class MainWindow : Window
             get
             {
                 var v = (ushort)((b << 8) | a);
+                //Console.Out.WriteLine("shift out = {0:X4}", v);
                 return (byte)((v >> (8 - offset)) & 0xFF);
             }
             set
             {
+                //Console.Out.WriteLine("Shift add = {0:X2}", value);
                 b = a;
                 b = value;
             }
@@ -52,11 +57,18 @@ public partial class MainWindow : Window
 
     private bool _running = true;
 
+    private record struct lastTime(uint milli, uint micro);
+
+    private lastTime _lt;
+
     public MainWindow()
     {
         InitializeComponent();
+        _updateFramebufferTimer = new DispatcherTimer();
+        _updateCpuTimer = new DispatcherTimer();
         var transformGroup = new TransformGroup();
         Image.RenderTransform = transformGroup;
+        var cpuStopWatch = new Stopwatch();
         transformGroup.Children.Add(new RotateTransform(-90, height / 2, width / 2));
         // transformGroup.Children.Add(new ScaleTransform(1, -1, height / 2, width / 2));
 
@@ -78,35 +90,26 @@ public partial class MainWindow : Window
         KeyDown += (obj, e) => { SetKey(e.Key, true); };
         KeyUp += (obj, e) => { SetKey(e.Key, false); };
 
-        var t = new Thread(OnUpdateCpu);
-        t.Start();
+        _updateFramebufferTimer.Tick += OnUpdateFramebuffer;
+        _updateFramebufferTimer.Interval = TimeSpan.FromMilliseconds(1000.0 / 60.0);
+
+        _updateCpuTimer.Tick += OnUpdateCpu;
+        _updateCpuTimer.Interval = TimeSpan.Zero;
+
+        _updateFramebufferTimer.Start();
+        cpuStopWatch.Restart();
+        _updateCpuTimer.Start();
         return;
 
-        void OnUpdateCpu()
+        void OnUpdateCpu(object? o, EventArgs e)
         {
-            var sw = new Stopwatch();
-            var frameSw = Stopwatch.StartNew();
-            var targetTicks = Stopwatch.Frequency / 2000000;
-            while (_running)
-            {
-                lock (_lock)
-                {
-                    sw.Restart();
-                    if (frameSw.ElapsedMilliseconds >= 1000.0 / 60.0)
-                    {
-                        OnUpdateFramebuffer();
-                    }
-
-                    _cpu.run();
-                    while (sw.ElapsedTicks < targetTicks)
-                    {
-                        Thread.SpinWait(1);
-                    }
-                }
-            }
+            var dt = cpuStopWatch.ElapsedMilliseconds * 1000;
+            var u = (uint)(dt / (1_000_000.0 / 2_000_000.0));
+            _cpu.run(u);
+            cpuStopWatch.Restart();
         }
 
-        void OnUpdateFramebuffer()
+        void OnUpdateFramebuffer(object? o, EventArgs e)
         {
             if (_cpu.GetPin(Pin.INTE))
             {
@@ -119,11 +122,8 @@ public partial class MainWindow : Window
                 buffer[i] = Reverse(seg[i]);
             }
 
-            Dispatcher.Invoke(() =>
-            {
-                var bmp = BitmapSource.Create(height, width, 0, 0, PixelFormats.BlackWhite, null, buffer, height / 8);
-                Image.Source = bmp;
-            });
+            var bmp = BitmapSource.Create(height, width, 0, 0, PixelFormats.BlackWhite, null, buffer, height / 8);
+            Image.Source = bmp;
         }
     }
 

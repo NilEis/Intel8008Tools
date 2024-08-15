@@ -952,7 +952,7 @@ public class Intel8008
         return res;
     }
 
-    public bool run(bool cpudiag = false, bool safe = false, bool print_debug = false)
+    public bool run(uint numCycles = 1, bool cpudiag = false, bool safe = false, bool print_debug = false)
     {
         var startCycles = cycles;
         short offset;
@@ -962,24 +962,29 @@ public class Intel8008
             cout = new StringBuilder();
         }
 
-        if (print_debug)
+        var u = (cycles - startCycles);
+        do
         {
-            cout!.AppendLine(GetCurrentInstrAsString());
-        }
+            u = (cycles - startCycles);
+            if (print_debug)
+            {
+                cout!.AppendLine(GetCurrentInstrAsString());
+            }
 
-        if (safe)
-        {
-            ExecuteSafe(PC, out offset, cpudiag);
-        }
-        else
-        {
-            Execute(PC, out offset, cpudiag);
-        }
+            if (safe)
+            {
+                ExecuteSafe(PC, out offset, cpudiag);
+            }
+            else
+            {
+                Execute(PC, out offset, cpudiag);
+            }
 
-        if (!JmpWasExecuted)
-        {
-            PC += (ushort)offset;
-        }
+            if (!JmpWasExecuted)
+            {
+                PC += (ushort)offset;
+            }
+        } while (offset != 0 && (cycles - startCycles) <= numCycles);
 
         if (print_debug)
         {
@@ -2045,7 +2050,7 @@ public class Intel8008
                 {
                 }
             }
-        } while (testCpu.run(true, false, print_debug));
+        } while (testCpu.run(1, true, false, print_debug));
     }
 
     public string GetCurrentInstrAsString()
