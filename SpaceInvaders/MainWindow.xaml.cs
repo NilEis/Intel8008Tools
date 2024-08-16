@@ -16,8 +16,7 @@ public partial class MainWindow : Window
 {
     private readonly Intel8008 _cpu = new(0x4000);
     private readonly DispatcherTimer _updateFramebufferTimer;
-    private readonly DispatcherTimer _updateCpuTimer;
-    private const int width = 224;
+    private const int width = 244;
     private const int height = 256;
     private readonly byte[] buffer = new byte[width * height / 8];
     private bool nextInt = true;
@@ -42,7 +41,6 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         _updateFramebufferTimer = new DispatcherTimer();
-        _updateCpuTimer = new DispatcherTimer();
         var transformGroup = new TransformGroup();
         Image.RenderTransform = transformGroup;
         var cpuStopWatch = new Stopwatch();
@@ -81,44 +79,63 @@ public partial class MainWindow : Window
         _updateFramebufferTimer.Tick += OnUpdateFramebuffer;
         _updateFramebufferTimer.Interval = TimeSpan.FromMilliseconds(1000.0 / 120.0);
 
-        _updateCpuTimer.Tick += OnUpdateCpu;
-        _updateCpuTimer.Interval = TimeSpan.Zero;
 
         _updateFramebufferTimer.Start();
         cpuStopWatch.Restart();
-        _updateCpuTimer.Start();
+        new Thread(OnUpdateCpu).Start();
         return;
 
-        void OnUpdateCpu(object? o, EventArgs e)
+        void OnUpdateCpu()
         {
-            var dt = cpuStopWatch.ElapsedMilliseconds * 1000;
-            var u = (uint)(dt / (1_000_000.0 / 2_000_000.0));
-            _cpu.run(u, false, false, false);
-            cpuStopWatch.Restart();
+            while (_running)
+            {
+                var dt = cpuStopWatch.ElapsedMilliseconds * 1000;
+                var u = (uint)(dt / (1_000_000.0 / 2_000_000.0));
+                u = u < 1 ? 1 : u;
+                lock (_lock)
+                {
+                    _cpu.run(u, false, false, false);
+                }
+
+                cpuStopWatch.Restart();
+                udelay(999);
+            }
         }
 
         void OnUpdateFramebuffer(object? o, EventArgs e)
         {
-            if (!_cpu.GetPin(Pin.INTE)) return;
-            if (nextInt)
+            lock (_lock)
             {
-                _cpu.GenerateInterrupt(1);
-            }
-            else
-            {
-                _cpu.GenerateInterrupt(2);
-                var seg = _cpu.GetMemory(0x2400, 0x3FFF);
-                for (var i = 0; i < seg.Count; i++)
+                if (!_cpu.GetPin(Pin.INTE)) return;
+                if (nextInt)
                 {
-                    buffer[i] = Reverse(seg[i]);
+                    _cpu.GenerateInterrupt(1);
+                }
+                else
+                {
+                    _cpu.GenerateInterrupt(2);
+                    var seg = _cpu.GetMemory(0x2400, 0x3FFF);
+                    for (var i = 0; i < seg.Count; i++)
+                    {
+                        buffer[i] = Reverse(seg[i]);
+                    }
+
+                    var bmp = BitmapSource.Create(height, width, 0, 0, PixelFormats.BlackWhite, null, buffer,
+                        height / 8);
+                    Image.Source = bmp;
                 }
 
-                var bmp = BitmapSource.Create(height, width, 0, 0, PixelFormats.BlackWhite, null, buffer,
-                    height / 8);
-                Image.Source = bmp;
+                nextInt = !nextInt;
             }
+        }
+    }
 
-            nextInt = !nextInt;
+    private static void udelay(long us)
+    {
+        var sw = Stopwatch.StartNew();
+        var v = (us * Stopwatch.Frequency) / 1000000;
+        while (sw.ElapsedTicks < v)
+        {
         }
     }
 
