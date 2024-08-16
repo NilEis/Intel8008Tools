@@ -4,17 +4,21 @@ public record struct ConditionCodes(bool Z, bool S, bool P, bool Cy, bool Ac, by
 {
     public byte GetAsValue()
     {
-        return (byte)((Z ? 1 : 0) | ((S ? 1 : 0) << 1) | ((P ? 1 : 0) << 2) | ((Cy ? 1 : 0) << 3) |
-                      ((Ac ? 1 : 0) << 4));
+        return (byte)(((Cy ? 1 : 0) << 0) |
+                      ((P ? 1 : 0) << 2) |
+                      ((Ac ? 1 : 0) << 4) |
+                      ((Z ? 1 : 0) << 6) |
+                      ((S ? 1 : 0) << 7)
+            );
     }
 
     public void SetAsValue(byte v)
     {
-        Z = (v & 0b1) == 1;
-        S = ((v >> 1) & 0b1) == 1;
+        Cy = ((v >> 0) & 0b1) == 1;
         P = ((v >> 2) & 0b1) == 1;
-        Cy = ((v >> 3) & 0b1) == 1;
         Ac = ((v >> 4) & 0b1) == 1;
+        Z = ((v >> 6) & 0b1) == 1;
+        S = ((v >> 7) & 0b1) == 1;
     }
 
     public void Init()
@@ -24,5 +28,10 @@ public record struct ConditionCodes(bool Z, bool S, bool P, bool Cy, bool Ac, by
         P = true;
         Cy = false;
         Ac = false;
+    }
+
+    public override string ToString()
+    {
+        return $"CC: 0b{GetAsValue():b8} (Cy:{(Cy ? 1 : 0)} P:{(P ? 1:0)} Ac:{(Ac ? 1:0)} Z:{(Z ? 1:0)} S:{(S ? 1:0)})";
     }
 }

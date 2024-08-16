@@ -14,12 +14,13 @@ namespace SpaceInvaders;
 /// </summary>
 public partial class MainWindow : Window
 {
-    private readonly Intel8008 _cpu = new();
+    private readonly Intel8008 _cpu = new(0x4000);
     private readonly DispatcherTimer _updateFramebufferTimer;
     private readonly DispatcherTimer _updateCpuTimer;
     private const int width = 224;
     private const int height = 256;
     private readonly byte[] buffer = new byte[width * height / 8];
+    private bool nextInt = true;
 
     private static readonly byte[] ReverseLookup =
     [
@@ -27,31 +28,7 @@ public partial class MainWindow : Window
         0x1, 0x9, 0x5, 0xd, 0x3, 0xb, 0x7, 0xf
     ];
 
-    private struct shiftRegister
-    {
-        private byte a;
-        private byte b;
-
-        public byte Reg
-        {
-            get
-            {
-                var v = (ushort)((b << 8) | a);
-                //Console.Out.WriteLine("shift out = {0:X4}", v);
-                return (byte)((v >> (8 - offset)) & 0xFF);
-            }
-            set
-            {
-                //Console.Out.WriteLine("Shift add = {0:X2}", value);
-                b = a;
-                b = value;
-            }
-        }
-
-        public byte offset;
-    }
-
-    private shiftRegister sR;
+    private ShiftRegister sR = ShiftRegister.Instance;
 
     private readonly object _lock = new();
 
@@ -72,26 +49,37 @@ public partial class MainWindow : Window
         transformGroup.Children.Add(new RotateTransform(-90, height / 2, width / 2));
         // transformGroup.Children.Add(new ScaleTransform(1, -1, height / 2, width / 2));
 
-        const string prefix = @"C:\Users\Nils_Eisenach\Desktop\dev\CS\Intel8008Tools\invaders";
+        var prefix = Environment.GetEnvironmentVariable("SPACE_INVADERS_DIR") ?? Directory.GetCurrentDirectory();
         _cpu.LoadMemory(Path.Join(prefix, "invaders.h"), 0)
             .LoadMemory(Path.Join(prefix, "invaders.g"), 0x800)
             .LoadMemory(Path.Join(prefix, "invaders.f"), 0x1000)
             .LoadMemory(Path.Join(prefix, "invaders.e"), 0x1800)
             ;
-
-        _cpu.Ports[0] = 1; //0b00001110;
-        _cpu.Ports[1] = 0; //0b00001101;
-        _cpu.Ports[2] = 0b00000000 | 0b00;
-        _cpu.Ports[3] = 0;
+        _cpu.SetPin(Pin.INTE, false);
+        _cpu.inPorts[0] = _ => 0b01110000;
+        _cpu.inPorts[1] = _ => (byte)(_cpu.Ports[1] | 0b00001000);
+        _cpu.inPorts[2] = _ => 0b00000000;
         _cpu.inPorts[3] = _ => sR.Reg;
-        _cpu.outPorts[2] = (_, b) => { sR.offset = (byte)(b & 0b00000111); };
+        _cpu.outPorts[2] = (_, b) => { sR.Offset = (byte)(b & 0b00000111); };
         _cpu.outPorts[4] = (_, b) => { sR.Reg = b; };
+        _cpu.outPorts[3] = (_, b) =>
+        {
+            /* sounds */
+        };
+        _cpu.outPorts[5] = (_, b) =>
+        {
+            /* sounds */
+        };
+        _cpu.outPorts[6] = (_, b) =>
+        {
+            /* watchdog */
+        };
 
         KeyDown += (obj, e) => { SetKey(e.Key, true); };
         KeyUp += (obj, e) => { SetKey(e.Key, false); };
 
         _updateFramebufferTimer.Tick += OnUpdateFramebuffer;
-        _updateFramebufferTimer.Interval = TimeSpan.FromMilliseconds(1000.0 / 60.0);
+        _updateFramebufferTimer.Interval = TimeSpan.FromMilliseconds(1000.0 / 120.0);
 
         _updateCpuTimer.Tick += OnUpdateCpu;
         _updateCpuTimer.Interval = TimeSpan.Zero;
@@ -105,25 +93,32 @@ public partial class MainWindow : Window
         {
             var dt = cpuStopWatch.ElapsedMilliseconds * 1000;
             var u = (uint)(dt / (1_000_000.0 / 2_000_000.0));
-            _cpu.run(u);
+            _cpu.run(u, false, false, false);
             cpuStopWatch.Restart();
         }
 
         void OnUpdateFramebuffer(object? o, EventArgs e)
         {
-            if (_cpu.GetPin(Pin.INTE))
+            if (!_cpu.GetPin(Pin.INTE)) return;
+            if (nextInt)
+            {
+                _cpu.GenerateInterrupt(1);
+            }
+            else
             {
                 _cpu.GenerateInterrupt(2);
+                var seg = _cpu.GetMemory(0x2400, 0x3FFF);
+                for (var i = 0; i < seg.Count; i++)
+                {
+                    buffer[i] = Reverse(seg[i]);
+                }
+
+                var bmp = BitmapSource.Create(height, width, 0, 0, PixelFormats.BlackWhite, null, buffer,
+                    height / 8);
+                Image.Source = bmp;
             }
 
-            var seg = _cpu.GetMemory(0x2400, 0x3FFF);
-            for (var i = 0; i < seg.Count; i++)
-            {
-                buffer[i] = Reverse(seg[i]);
-            }
-
-            var bmp = BitmapSource.Create(height, width, 0, 0, PixelFormats.BlackWhite, null, buffer, height / 8);
-            Image.Source = bmp;
+            nextInt = !nextInt;
         }
     }
 

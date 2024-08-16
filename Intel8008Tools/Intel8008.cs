@@ -28,6 +28,14 @@ public class Intel8008
     private ulong pins;
     public Func<int, byte>[] inPorts;
     public Action<int, byte>[] outPorts;
+    public readonly ushort mirrorRam = 0;
+    private readonly ushort[] ROM = [ushort.MaxValue, ushort.MaxValue];
+
+    public void SetRom(ushort start, ushort end)
+    {
+        ROM[0] = start;
+        ROM[1] = end;
+    }
 
     public byte[] Ports = new byte[256];
 
@@ -119,12 +127,20 @@ public class Intel8008
     private readonly byte[] Memory = new byte[0x10000];
     private ConditionCodes Cc;
 
-    private Intel8008(byte[] memory)
+    private Intel8008(byte[] memory, ushort mirrorRam)
     {
+        this.mirrorRam = mirrorRam;
         Array.Clear(Memory);
         InitRegisters();
-        inPorts = Enumerable.Repeat((int port) => Ports[port], 256).ToArray();
-        outPorts = Enumerable.Repeat((int port, byte value) => { Ports[port] = value; }, 256).ToArray();
+        inPorts = Enumerable
+            .Repeat((int port) =>
+            {
+                throw new NotImplementedException($"in {port} not implemented");
+                return (byte)0;
+            }, 256).ToArray();
+        outPorts = Enumerable
+            .Repeat((int port, byte value) => { throw new NotImplementedException($"out {port} not implemented"); },
+                256).ToArray();
         LoadMemory(memory, 0);
     }
 
@@ -1080,8 +1096,41 @@ public class Intel8008
                     case 0b00100111:
                     {
                         cycles += 4;
-                        A = (A & 0b1111) > 9 || Cc.Ac ? (byte)(A + 6) : A;
-                        A = A >> 4 > 9 || Cc.Cy ? (byte)(A + 0x60) : A;
+                        byte corr = 0;
+                        byte lsb = (byte)(A & 0x0F);
+                        byte msb = (byte)(A >> 4);
+                        bool cy = Cc.Cy;
+                        if (Cc.Ac || lsb > 0x09)
+                        {
+                            corr = 0x06;
+                        }
+
+                        if (Cc.Cy || msb > 0x09 || (msb >= 0x09 && lsb > 0x09))
+                        {
+                            corr |= 0x60;
+                            cy = true;
+                        }
+
+                        Cc.Ac = ((A & 0x0F) + (corr & 0x0F) & 0b10000) != 0;
+                        A += corr;
+                        Cc.Cy = cy;
+
+                        /*if ((A & 0x0F) > 0x09 || Cc.Ac)
+                        {
+                            var newA = (byte)(A + 0x06);
+                            Cc.Ac = newA > 0x0F;
+                            A = newA;
+                        }
+
+                        if ((A & 0xF0) > 0x90 || Cc.Cy)
+                        {
+                            var newA = (ushort)(A + 0x60);
+                            Cc.Cy = newA > 0xFF;
+                            A = (byte)newA;
+                        }*/
+                        Z = A;
+                        S = A;
+                        P = A;
                     }
                         break;
                     case 0b00101010:
@@ -1785,7 +1834,7 @@ public class Intel8008
         }
     }
 
-    public Intel8008(string pathToFile) : this(File.ReadAllBytes(pathToFile))
+    public Intel8008(string pathToFile, ushort mirrorRam) : this(File.ReadAllBytes(pathToFile), mirrorRam)
     {
     }
 
@@ -1811,13 +1860,16 @@ public class Intel8008
 
     private byte AluAdd(byte a, byte b, bool setFlags, Flags flags = Flags.ALL, bool c = false)
     {
-        var res = (ushort)(a + b + (c ? 1 : 0));
-        if (setFlags)
+        var withCarry = c ? 1 : 0;
+        var res = (ushort)(a + b + withCarry);
+        if (!setFlags) return (byte)(res & 0xFF);
+        if (flags.HasFlag(Flags.AC))
         {
-            SetArithFlags(res, flags);
+            Cc.Ac = (((a & 0x0F) + (b & 0x0F) + withCarry) & 0xF0) != 0;
         }
 
-        Cc.Ac = (a & 0xF) + (b & 0xF) > 0xF;
+        SetArithFlags(res, flags);
+
         return (byte)(res & 0xFF);
     }
 
@@ -1831,7 +1883,6 @@ public class Intel8008
             SetArithFlags(res, flags);
         }
 
-        Cc.Ac = (a & 0xF) < (b & 0xF);
         return (byte)(res & 0xFF);
     }
 
@@ -1857,22 +1908,22 @@ public class Intel8008
 
     private void SetArithFlags(ushort res, Flags flags)
     {
-        if ((flags & Flags.Z) != 0)
+        if (flags.HasFlag(Flags.Z))
         {
             Z = (byte)(res & 0xFF);
         }
 
-        if ((flags & Flags.S) != 0)
+        if (flags.HasFlag(Flags.S))
         {
             S = (byte)(res & 0xFF);
         }
 
-        if ((flags & Flags.P) != 0)
+        if (flags.HasFlag(Flags.P))
         {
             P = (byte)(res & 0xFF);
         }
 
-        if ((flags & Flags.CY) != 0)
+        if (flags.HasFlag(Flags.CY))
         {
             Cc.Cy = res > 0xFF;
         }
@@ -1887,13 +1938,18 @@ public class Intel8008
         DisableInterrupts();
     }
 
-    public Intel8008() : this(Array.Empty<byte>())
+    public Intel8008(ushort mirrorRam = 0) : this([], mirrorRam)
     {
     }
 
     private void WriteToMemory(int addr, byte value)
     {
+        if (addr >= ROM[0] && addr <= ROM[1])
+        {
+            throw new ArgumentException("Invalid address (ROM not writable)");
+        }
         Memory[(ushort)addr] = value;
+        Memory[(ushort)(addr + mirrorRam)] = value;
         if (false)
         {
             switch (addr)
@@ -2029,8 +2085,7 @@ public class Intel8008
 
         var testCpu = new Intel8008().LoadMemory(f, 0x100)
             .LoadMemory([0xc3, 0x00, 0x01], 0)
-            .LoadMemory([0x07], 368)
-            .LoadMemory([0xc3, 0xc2, 0x05], 0x59c);
+            .LoadMemory([0x07], 368);
         do
         {
             /* on error:
@@ -2070,8 +2125,7 @@ public class Intel8008
             .Append(dismMsg)
             .Append(" - A = 0x")
             .Append($"{A:X2}")
-            .Append(", CC = ")
-            .Append($"{Cc.GetAsValue():b8}")
+            .Append($", {Cc} ")
             .Append(", BC = ")
             .Append($"{BC:X4}")
             .Append(", DE = ")
