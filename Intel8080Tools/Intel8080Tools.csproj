@@ -13,6 +13,7 @@
         <PackageLicenseFile>LICENSE</PackageLicenseFile>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <Authors>Nils Eisenach</Authors>
+        <Version>1.0.1</Version>
     </PropertyGroup>
 
     <ItemGroup>

@@ -15,17 +15,19 @@ public class Intel8080
 
     private readonly Stack<State> states = [];
 
-    private byte A;
-    private ushort BC;
-    private ConditionCodes Cc;
+    public byte A;
+    public ushort BC;
+    public ConditionCodes Cc;
     private uint cycles;
 
-    private ushort DE;
+    public ushort DE;
 
-    private ushort HL;
+    public ushort HL;
     private readonly Func<int, byte>[] inPorts;
 
     public void SetInPort(ushort port, Func<int, byte> f) => inPorts[port] = f;
+    public bool EnableHooks = false;
+    public Action[] hooks = new Action[byte.MaxValue];
 
     private int iterations;
     private bool JmpWasExecuted;
@@ -33,12 +35,12 @@ public class Intel8080
 
     public void SetOutPort(ushort port, Action<int, byte> f) => outPorts[port] = f;
 
-    private ushort PC;
+    public ushort PC;
     private ulong pins;
 
     public byte[] Ports = new byte[256];
 
-    private ushort SP;
+    public ushort SP;
     private bool willFail;
 
     private Intel8080(byte[] memory, ushort mirrorRam)
@@ -51,6 +53,7 @@ public class Intel8080
         outPorts = Enumerable
             .Repeat(void (int port, byte _) => throw new NotImplementedException($"out {port} not implemented"),
                 256).ToArray();
+        hooks = Enumerable.Repeat<Action>(() => { }, byte.MaxValue).ToArray();
         LoadMemory(memory, 0);
     }
 
@@ -58,43 +61,43 @@ public class Intel8080
     {
     }
 
-    private byte B
+    public byte B
     {
         get => (byte)(BC >> 8);
         set => BC = (ushort)((BC & 0xFF) | (value << 8));
     }
 
-    private byte C
+    public byte C
     {
         get => (byte)(BC & 0xFF);
         set => BC = (ushort)((BC & (0xFF << 8)) | value);
     }
 
-    private byte D
+    public byte D
     {
         get => (byte)(DE >> 8);
         set => DE = (ushort)((DE & 0xFF) | (value << 8));
     }
 
-    private byte E
+    public byte E
     {
         get => (byte)(DE & 0xFF);
         set => DE = (ushort)((DE & (0xFF << 8)) | value);
     }
 
-    private byte H
+    public byte H
     {
         get => (byte)(HL >> 8);
         set => HL = (ushort)((HL & 0xFF) | (value << 8));
     }
 
-    private byte L
+    public byte L
     {
         get => (byte)(HL & 0xFF);
         set => HL = (ushort)((HL & (0xFF << 8)) | value);
     }
 
-    private byte M
+    public byte M
     {
         get => LoadByteFromMemory(HL);
         set => WriteToMemory(HL, value);
@@ -115,7 +118,7 @@ public class Intel8080
         set => Cc.P = BitOperations.PopCount(value) % 2 == 0;
     }
 
-    private byte Cy
+    public byte Cy
     {
         get => (byte)(Cc.Cy ? 1 : 0);
         set => Cc.Cy = value != 0;
@@ -126,7 +129,7 @@ public class Intel8080
         set => Cc.Ac = value != 0;
     }
 
-    private ushort PSW
+    public ushort PSW
     {
         get => (ushort)((A << 8) | Cc.GetAsValue());
         set
@@ -874,6 +877,11 @@ public class Intel8080
     private void ExecuteTick(ushort pos, ref short offset, bool cpudiag = false)
     {
         JmpWasExecuted = false;
+        if (EnableHooks)
+        {
+            hooks[Memory[pos]]();
+        }
+
         switch ((Memory[pos] & 0b11000000) >> 6)
         {
             case 0b00:
