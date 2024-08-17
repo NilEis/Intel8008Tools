@@ -1,4 +1,4 @@
-﻿namespace Intel8008Tools;
+﻿namespace Intel8080Tools;
 
 public record struct ConditionCodes(bool Z, bool S, bool P, bool Cy, bool Ac)
 {

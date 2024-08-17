@@ -1,4 +1,4 @@
-﻿namespace Intel8008Tools;
+﻿namespace Intel8080Tools;
 
 [Flags]
 public enum Flags : byte

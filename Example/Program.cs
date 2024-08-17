@@ -1,3 +1,3 @@
-﻿using Intel8008Tools;
+﻿using Intel8080Tools;
 
-Intel8008.RunTestSuite(true);
+Intel8080.RunTestSuite(true);

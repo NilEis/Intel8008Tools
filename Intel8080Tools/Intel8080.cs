@@ -5,9 +5,9 @@ using System.Diagnostics;
 using System.Numerics;
 using System.Text;
 
-namespace Intel8008Tools;
+namespace Intel8080Tools;
 
-public class Intel8008
+public class Intel8080
 {
     private readonly byte[] Memory = new byte[0x10000];
     private readonly ushort mirrorRam;
@@ -41,7 +41,7 @@ public class Intel8008
     private ushort SP;
     private bool willFail;
 
-    private Intel8008(byte[] memory, ushort mirrorRam)
+    private Intel8080(byte[] memory, ushort mirrorRam)
     {
         this.mirrorRam = mirrorRam;
         Array.Clear(Memory);
@@ -54,7 +54,7 @@ public class Intel8008
         LoadMemory(memory, 0);
     }
 
-    public Intel8008(ushort mirrorRam = 0) : this([], mirrorRam)
+    public Intel8080(ushort mirrorRam = 0) : this([], mirrorRam)
     {
     }
 
@@ -147,12 +147,12 @@ public class Intel8008
         ROM[1] = end;
     }
 
-    public Intel8008 LoadMemory(string filePath, int offset)
+    public Intel8080 LoadMemory(string filePath, int offset)
     {
         return LoadMemory(File.ReadAllBytes(filePath), offset);
     }
 
-    public Intel8008 LoadMemory(byte[] memory, int offset)
+    public Intel8080 LoadMemory(byte[] memory, int offset)
     {
         memory.CopyTo(Memory, offset);
         return this;
@@ -1871,7 +1871,7 @@ public class Intel8008
             }
         }
 
-        var testCpu = new Intel8008().LoadMemory(f, 0x100)
+        var testCpu = new Intel8080().LoadMemory(f, 0x100)
             .LoadMemory([0xc3, 0x00, 0x01], 0)
             .LoadMemory([0x07], 368);
         do

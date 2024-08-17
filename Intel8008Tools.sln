@@ -1,6 +1,6 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Intel8008Tools", "Intel8008Tools\Intel8008Tools.csproj", "{E710B2E2-08A9-47E1-A519-D7FE3762B600}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Intel8080Tools", "Intel8080Tools\Intel8080Tools.csproj", "{E710B2E2-08A9-47E1-A519-D7FE3762B600}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Example", "Example\Example.csproj", "{C780FEE8-0A02-468F-B87B-C368360792C2}"
 EndProject
