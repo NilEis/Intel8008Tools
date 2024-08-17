@@ -3,15 +3,16 @@
     <PropertyGroup>
         <TargetFramework>net8.0</TargetFramework>
         <LangVersion>12</LangVersion>
-        <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
         <Title>Intel8080Tools</Title>
         <Description>An emulator for the Intel8080 CPU</Description>
-        <RepositoryUrl>https://github.com/NilEis/Intel8008Tools</RepositoryUrl>
+        <RepositoryUrl>https://github.com/NilEis/Intel8080Tools</RepositoryUrl>
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
         <Copyright>MIT</Copyright>
         <PackageLicenseFile>LICENSE</PackageLicenseFile>
         <PackageReadmeFile>README.md</PackageReadmeFile>
+        <Authors>Nils Eisenach</Authors>
     </PropertyGroup>
 
     <ItemGroup>
