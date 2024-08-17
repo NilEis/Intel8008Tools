@@ -9,39 +9,54 @@ namespace Intel8008Tools;
 
 public class Intel8008
 {
-    private readonly record struct State(
-        uint cycles,
-        ulong pins,
-        byte[] ports,
-        byte A,
-        ushort BC,
-        ushort DE,
-        ushort HL,
-        ushort SP,
-        ushort PC,
-        byte ConditionState,
-        byte[] mem);
-
-    private readonly Stack<State> states = [];
-    private int iterations;
-    private uint cycles;
-    private ulong pins;
-    public Func<int, byte>[] inPorts;
-    public Action<int, byte>[] outPorts;
-    public readonly ushort mirrorRam = 0;
+    private readonly byte[] Memory = new byte[0x10000];
+    private readonly ushort mirrorRam;
     private readonly ushort[] ROM = [ushort.MaxValue, ushort.MaxValue];
 
-    public void SetRom(ushort start, ushort end)
-    {
-        ROM[0] = start;
-        ROM[1] = end;
-    }
-
-    public byte[] Ports = new byte[256];
+    private readonly Stack<State> states = [];
 
     private byte A;
     private ushort BC;
+    private ConditionCodes Cc;
+    private uint cycles;
+
+    private ushort DE;
+
+    private ushort HL;
+    private readonly Func<int, byte>[] inPorts;
+
+    public void SetInPort(ushort port, Func<int, byte> f) => inPorts[port] = f;
+
+    private int iterations;
+    private bool JmpWasExecuted;
+    private readonly Action<int, byte>[] outPorts;
+
+    public void SetOutPort(ushort port, Action<int, byte> f) => outPorts[port] = f;
+
+    private ushort PC;
+    private ulong pins;
+
+    public byte[] Ports = new byte[256];
+
+    private ushort SP;
     private bool willFail;
+
+    private Intel8008(byte[] memory, ushort mirrorRam)
+    {
+        this.mirrorRam = mirrorRam;
+        Array.Clear(Memory);
+        InitRegisters();
+        inPorts = Enumerable
+            .Repeat(byte (int port) => throw new NotImplementedException($"in {port} not implemented"), 256).ToArray();
+        outPorts = Enumerable
+            .Repeat(void (int port, byte _) => throw new NotImplementedException($"out {port} not implemented"),
+                256).ToArray();
+        LoadMemory(memory, 0);
+    }
+
+    public Intel8008(ushort mirrorRam = 0) : this([], mirrorRam)
+    {
+    }
 
     private byte B
     {
@@ -55,8 +70,6 @@ public class Intel8008
         set => BC = (ushort)((BC & (0xFF << 8)) | value);
     }
 
-    private ushort DE;
-
     private byte D
     {
         get => (byte)(DE >> 8);
@@ -69,15 +82,13 @@ public class Intel8008
         set => DE = (ushort)((DE & (0xFF << 8)) | value);
     }
 
-    private ushort HL;
-
     private byte H
     {
         get => (byte)(HL >> 8);
         set => HL = (ushort)((HL & 0xFF) | (value << 8));
     }
 
-    public byte L
+    private byte L
     {
         get => (byte)(HL & 0xFF);
         set => HL = (ushort)((HL & (0xFF << 8)) | value);
@@ -91,19 +102,16 @@ public class Intel8008
 
     public byte Z
     {
-        get => (byte)(Cc.Z ? 1 : 0);
         set => Cc.Z = value == 0;
     }
 
     public byte S
     {
-        get => (byte)(Cc.S ? 1 : 0);
         set => Cc.S = (value & 0b10000000) == 0b10000000;
     }
 
     public byte P
     {
-        get => (byte)(Cc.P ? 1 : 0);
         set => Cc.P = BitOperations.PopCount(value) % 2 == 0;
     }
 
@@ -115,33 +123,28 @@ public class Intel8008
 
     public byte Ac
     {
-        get => (byte)(Cc.Ac ? 1 : 0);
         set => Cc.Ac = value != 0;
     }
 
-    private ushort SP;
-    private bool JmpWasExecuted;
-
-    private ushort PC;
-
-    private readonly byte[] Memory = new byte[0x10000];
-    private ConditionCodes Cc;
-
-    private Intel8008(byte[] memory, ushort mirrorRam)
+    private ushort PSW
     {
-        this.mirrorRam = mirrorRam;
-        Array.Clear(Memory);
-        InitRegisters();
-        inPorts = Enumerable
-            .Repeat((int port) =>
-            {
-                throw new NotImplementedException($"in {port} not implemented");
-                return (byte)0;
-            }, 256).ToArray();
-        outPorts = Enumerable
-            .Repeat((int port, byte value) => { throw new NotImplementedException($"out {port} not implemented"); },
-                256).ToArray();
-        LoadMemory(memory, 0);
+        get => (ushort)((A << 8) | Cc.GetAsValue());
+        set
+        {
+            A = (byte)((value >> 8) & 0xFF);
+            Cc.SetAsValue((byte)(value & 0xFF));
+        }
+    }
+
+    public static Opcode GetOpcode(byte b)
+    {
+        return (Opcode)b;
+    }
+
+    public void SetRom(ushort start, ushort end)
+    {
+        ROM[0] = start;
+        ROM[1] = end;
     }
 
     public Intel8008 LoadMemory(string filePath, int offset)
@@ -279,21 +282,14 @@ public class Intel8008
                                 var rp = "";
                                 var data = (mem[pos + 2] << 8) | mem[pos + 1];
                                 offset += 2;
-                                switch ((Rp)((mem[pos] >> 4) & 0b11))
+                                rp = (Rp)((mem[pos] >> 4) & 0b11) switch
                                 {
-                                    case Rp.BC:
-                                        rp = "BC";
-                                        break;
-                                    case Rp.DE:
-                                        rp = "DE";
-                                        break;
-                                    case Rp.HL:
-                                        rp = "HL";
-                                        break;
-                                    case Rp.SP:
-                                        rp = "SP";
-                                        break;
-                                }
+                                    Rp.BC => "BC",
+                                    Rp.DE => "DE",
+                                    Rp.HL => "HL",
+                                    Rp.SP => "SP",
+                                    _ => rp
+                                };
 
                                 res = $"LXI {rp}, 0x{data:X4} // {rp} = 0x{data:X4}";
                             }
@@ -301,22 +297,14 @@ public class Intel8008
                             case 0b0010:
                             {
                                 cyc += 7;
-                                var rp = "";
-                                switch ((Rp)((mem[pos] >> 4) & 0b11))
+                                var rp = (Rp)((mem[pos] >> 4) & 0b11) switch
                                 {
-                                    case Rp.BC:
-                                        rp = "BC";
-                                        break;
-                                    case Rp.DE:
-                                        rp = "DE";
-                                        break;
-                                    case Rp.HL:
-                                        rp = "INVALID_REGISTER -> HL";
-                                        break;
-                                    case Rp.SP:
-                                        rp = "INVALID_REGISTER -> SP";
-                                        break;
-                                }
+                                    Rp.BC => "BC",
+                                    Rp.DE => "DE",
+                                    Rp.HL => "INVALID_REGISTER -> HL",
+                                    Rp.SP => "INVALID_REGISTER -> SP",
+                                    _ => ""
+                                };
 
                                 res = $"STAX {rp} // {rp} = A";
                             }
@@ -324,22 +312,14 @@ public class Intel8008
                             case 0b0011:
                             {
                                 cyc += 5;
-                                var rp = "";
-                                switch ((Rp)((mem[pos] >> 4) & 0b11))
+                                var rp = (Rp)((mem[pos] >> 4) & 0b11) switch
                                 {
-                                    case Rp.BC:
-                                        rp = "BC";
-                                        break;
-                                    case Rp.DE:
-                                        rp = "DE";
-                                        break;
-                                    case Rp.HL:
-                                        rp = "HL";
-                                        break;
-                                    case Rp.SP:
-                                        rp = "SP";
-                                        break;
-                                }
+                                    Rp.BC => "BC",
+                                    Rp.DE => "DE",
+                                    Rp.HL => "HL",
+                                    Rp.SP => "SP",
+                                    _ => ""
+                                };
 
                                 res = $"INX {rp} // {rp} += 1";
                             }
@@ -347,22 +327,14 @@ public class Intel8008
                             case 0b1001:
                             {
                                 cyc += 10;
-                                var rp = "";
-                                switch ((Rp)((mem[pos] >> 4) & 0b11))
+                                var rp = (Rp)((mem[pos] >> 4) & 0b11) switch
                                 {
-                                    case Rp.BC:
-                                        rp = "BC";
-                                        break;
-                                    case Rp.DE:
-                                        rp = "DE";
-                                        break;
-                                    case Rp.HL:
-                                        rp = "HL";
-                                        break;
-                                    case Rp.SP:
-                                        rp = "SP";
-                                        break;
-                                }
+                                    Rp.BC => "BC",
+                                    Rp.DE => "DE",
+                                    Rp.HL => "HL",
+                                    Rp.SP => "SP",
+                                    _ => ""
+                                };
 
                                 res = $"DAD {rp} // HL += {rp}";
                             }
@@ -370,22 +342,14 @@ public class Intel8008
                             case 0b1010:
                             {
                                 cyc += 7;
-                                var rp = "";
-                                switch ((Rp)((mem[pos] >> 4) & 0b11))
+                                var rp = (Rp)((mem[pos] >> 4) & 0b11) switch
                                 {
-                                    case Rp.BC:
-                                        rp = "BC";
-                                        break;
-                                    case Rp.DE:
-                                        rp = "DE";
-                                        break;
-                                    case Rp.HL:
-                                        rp = "INVALID_REGISTER -> HL";
-                                        break;
-                                    case Rp.SP:
-                                        rp = "INVALID_REGISTER -> SP";
-                                        break;
-                                }
+                                    Rp.BC => "BC",
+                                    Rp.DE => "DE",
+                                    Rp.HL => "INVALID_REGISTER -> HL",
+                                    Rp.SP => "INVALID_REGISTER -> SP",
+                                    _ => ""
+                                };
 
                                 res = $"LDAX {rp} // A = Memory[{rp}]";
                             }
@@ -393,22 +357,14 @@ public class Intel8008
                             case 0b1011:
                             {
                                 cyc += 5;
-                                var rp = "";
-                                switch ((Rp)((mem[pos] >> 4) & 0b11))
+                                var rp = (Rp)((mem[pos] >> 4) & 0b11) switch
                                 {
-                                    case Rp.BC:
-                                        rp = "BC";
-                                        break;
-                                    case Rp.DE:
-                                        rp = "DE";
-                                        break;
-                                    case Rp.HL:
-                                        rp = "HL";
-                                        break;
-                                    case Rp.SP:
-                                        rp = "SP";
-                                        break;
-                                }
+                                    Rp.BC => "BC",
+                                    Rp.DE => "DE",
+                                    Rp.HL => "HL",
+                                    Rp.SP => "SP",
+                                    _ => ""
+                                };
 
                                 res = $"DCX {rp} // {rp} -= 1";
                             }
@@ -418,49 +374,7 @@ public class Intel8008
                                 {
                                     case 0b100:
                                     {
-                                        var ddd = "";
-                                        switch ((Reg)((mem[pos] >> 3) & 0b111))
-                                        {
-                                            case Reg.B:
-                                                cyc += 9;
-                                                ddd = "B";
-                                                break;
-                                            case Reg.C:
-                                                cyc += 5;
-                                                ddd = "C";
-                                                break;
-                                            case Reg.D:
-                                                cyc += 9;
-                                                ddd = "D";
-                                                break;
-                                            case Reg.E:
-                                                cyc += 5;
-                                                ddd = "E";
-                                                break;
-                                            case Reg.H:
-                                                cyc += 9;
-                                                ddd = "H";
-                                                break;
-                                            case Reg.L:
-                                                cyc += 5;
-                                                ddd = "L";
-                                                break;
-                                            case Reg.M:
-                                                cyc += 10;
-                                                ddd = $"Memory[HL]";
-                                                break;
-                                            case Reg.A:
-                                                cyc += 5;
-                                                ddd = "A";
-                                                break;
-                                        }
-
-                                        res = $"INR {ddd} // {ddd} += 1";
-                                    }
-                                        break;
-                                    case 0b101:
-                                    {
-                                        var ddd = "";
+                                        string ddd;
                                         switch ((Reg)((mem[pos] >> 3) & 0b111))
                                         {
                                             case Reg.B:
@@ -495,6 +409,52 @@ public class Intel8008
                                                 cyc += 5;
                                                 ddd = "A";
                                                 break;
+                                            default:
+                                                throw new UnreachableException();
+                                        }
+
+                                        res = $"INR {ddd} // {ddd} += 1";
+                                    }
+                                        break;
+                                    case 0b101:
+                                    {
+                                        string ddd;
+                                        switch ((Reg)((mem[pos] >> 3) & 0b111))
+                                        {
+                                            case Reg.B:
+                                                cyc += 9;
+                                                ddd = "B";
+                                                break;
+                                            case Reg.C:
+                                                cyc += 5;
+                                                ddd = "C";
+                                                break;
+                                            case Reg.D:
+                                                cyc += 9;
+                                                ddd = "D";
+                                                break;
+                                            case Reg.E:
+                                                cyc += 5;
+                                                ddd = "E";
+                                                break;
+                                            case Reg.H:
+                                                cyc += 9;
+                                                ddd = "H";
+                                                break;
+                                            case Reg.L:
+                                                cyc += 5;
+                                                ddd = "L";
+                                                break;
+                                            case Reg.M:
+                                                cyc += 10;
+                                                ddd = "Memory[HL]";
+                                                break;
+                                            case Reg.A:
+                                                cyc += 5;
+                                                ddd = "A";
+                                                break;
+                                            default:
+                                                throw new UnreachableException();
                                         }
 
                                         res = $"DCR {ddd} // {ddd} -= 1";
@@ -502,7 +462,7 @@ public class Intel8008
                                         break;
                                     case 0b110:
                                     {
-                                        var ddd = "";
+                                        string ddd;
                                         var data = mem[pos + 1];
                                         offset += 1;
                                         switch ((Reg)((mem[pos] >> 3) & 0b111))
@@ -539,6 +499,8 @@ public class Intel8008
                                                 cyc += 5;
                                                 ddd = "A";
                                                 break;
+                                            default:
+                                                throw new UnreachableException();
                                         }
 
                                         res = $"MVI {ddd}, 0x{data:X2} // {ddd} = 0x{data:X2}";
@@ -565,61 +527,31 @@ public class Intel8008
                         cyc += 6; // 5-7
                         var src = "";
                         var dest = "";
-                        switch ((Reg)(mem[pos] & 0b111))
+                        src = (Reg)(mem[pos] & 0b111) switch
                         {
-                            case Reg.B:
-                                src = "B";
-                                break;
-                            case Reg.C:
-                                src = "C";
-                                break;
-                            case Reg.D:
-                                src = "D";
-                                break;
-                            case Reg.E:
-                                src = "E";
-                                break;
-                            case Reg.H:
-                                src = "H";
-                                break;
-                            case Reg.L:
-                                src = "L";
-                                break;
-                            case Reg.M:
-                                src = "M";
-                                break;
-                            case Reg.A:
-                                src = "A";
-                                break;
-                        }
+                            Reg.B => "B",
+                            Reg.C => "C",
+                            Reg.D => "D",
+                            Reg.E => "E",
+                            Reg.H => "H",
+                            Reg.L => "L",
+                            Reg.M => "M",
+                            Reg.A => "A",
+                            _ => src
+                        };
 
-                        switch ((Reg)((mem[pos] >> 3) & 0b111))
+                        dest = (Reg)((mem[pos] >> 3) & 0b111) switch
                         {
-                            case Reg.B:
-                                dest = "B";
-                                break;
-                            case Reg.C:
-                                dest = "C";
-                                break;
-                            case Reg.D:
-                                dest = "D";
-                                break;
-                            case Reg.E:
-                                dest = "E";
-                                break;
-                            case Reg.H:
-                                dest = "H";
-                                break;
-                            case Reg.L:
-                                dest = "L";
-                                break;
-                            case Reg.M:
-                                dest = "M";
-                                break;
-                            case Reg.A:
-                                dest = "A";
-                                break;
-                        }
+                            Reg.B => "B",
+                            Reg.C => "C",
+                            Reg.D => "D",
+                            Reg.E => "E",
+                            Reg.H => "H",
+                            Reg.L => "L",
+                            Reg.M => "M",
+                            Reg.A => "A",
+                            _ => dest
+                        };
 
                         res = $"MOV {dest}, {src} // {dest} = {src}";
                     }
@@ -630,62 +562,31 @@ public class Intel8008
             case 0b10:
             {
                 cyc += 5; //4 - 7
-                var src = "";
-                switch ((Reg)(mem[pos] & 0b111))
+                var src = (Reg)(mem[pos] & 0b111) switch
                 {
-                    case Reg.B:
-                        src = "B";
-                        break;
-                    case Reg.C:
-                        src = "C";
-                        break;
-                    case Reg.D:
-                        src = "D";
-                        break;
-                    case Reg.E:
-                        src = "E";
-                        break;
-                    case Reg.H:
-                        src = "H";
-                        break;
-                    case Reg.L:
-                        src = "L";
-                        break;
-                    case Reg.M:
-                        src = "M";
-                        break;
-                    case Reg.A:
-                        src = "A";
-                        break;
-                }
+                    Reg.B => "B",
+                    Reg.C => "C",
+                    Reg.D => "D",
+                    Reg.E => "E",
+                    Reg.H => "H",
+                    Reg.L => "L",
+                    Reg.M => "M",
+                    Reg.A => "A",
+                    _ => ""
+                };
 
-                switch ((Alu)((mem[pos] >> 3) & 0b111))
+                res = (Alu)((mem[pos] >> 3) & 0b111) switch
                 {
-                    case Alu.ADD:
-                        res = $"ADD {src} // A = A + {src};";
-                        break;
-                    case Alu.ADC:
-                        res = $"ADC {src} // A = A + {src} + Cy";
-                        break;
-                    case Alu.SUB:
-                        res = $"SUB {src} // A = A - {src}";
-                        break;
-                    case Alu.SBB:
-                        res = $"SBB {src} // A = A - {src} - Cy";
-                        break;
-                    case Alu.ANA:
-                        res = $"ANA {src} // A = A & {src}";
-                        break;
-                    case Alu.XRA:
-                        res = $"XRA {src} // A = A ^ {src}";
-                        break;
-                    case Alu.ORA:
-                        res = $"ORA {src} // A = A | {src}";
-                        break;
-                    case Alu.CMP:
-                        res = $"CMP {src} // A = A - {src}";
-                        break;
-                }
+                    Alu.ADD => $"ADD {src} // A = A + {src};",
+                    Alu.ADC => $"ADC {src} // A = A + {src} + Cy",
+                    Alu.SUB => $"SUB {src} // A = A - {src}",
+                    Alu.SBB => $"SBB {src} // A = A - {src} - Cy",
+                    Alu.ANA => $"ANA {src} // A = A & {src}",
+                    Alu.XRA => $"XRA {src} // A = A ^ {src}",
+                    Alu.ORA => $"ORA {src} // A = A | {src}",
+                    Alu.CMP => $"CMP {src} // A = A - {src}",
+                    _ => res
+                };
             }
                 break;
             case 0b11:
@@ -759,62 +660,40 @@ public class Intel8008
                             case 0b000:
                             {
                                 cyc += 10; // 5 -  11
-                                switch ((CompareCondition)((mem[pos] >> 3) & 0b111))
+                                res = (CompareCondition)((mem[pos] >> 3) & 0b111) switch
                                 {
-                                    case CompareCondition.NZ:
-                                        res =
-                                            "RNZ // if(!Cc.Z){PC = (short)((Memory[Sp + 1] << 8) | Memory[Sp]); SP += 2;}";
-                                        break;
-                                    case CompareCondition.Z:
-                                        res =
-                                            "RZ // if(Cc.Z){PC = (short)((Memory[Sp + 1] << 8) | Memory[Sp]); SP += 2;}";
-                                        break;
-                                    case CompareCondition.NC:
-                                        res =
-                                            "RNC // if(!Cc.Cy){PC = (short)((Memory[Sp + 1] << 8) | Memory[Sp]); SP += 2;}";
-                                        break;
-                                    case CompareCondition.C:
-                                        res =
-                                            "RC // if(Cc.Cy){PC = (short)((Memory[Sp + 1] << 8) | Memory[Sp]); SP += 2;}";
-                                        break;
-                                    case CompareCondition.PO:
-                                        res =
-                                            "RPO // if(!Cc.P){PC = (short)((Memory[Sp + 1] << 8) | Memory[Sp]); SP += 2;}";
-                                        break;
-                                    case CompareCondition.PE:
-                                        res =
-                                            "RPE // if(Cc.P){PC = (short)((Memory[Sp + 1] << 8) | Memory[Sp]); SP += 2;}";
-                                        break;
-                                    case CompareCondition.P:
-                                        res =
-                                            "RP // if(!Cc.S){PC = (short)((Memory[Sp + 1] << 8) | Memory[Sp]); SP += 2;}";
-                                        break;
-                                    case CompareCondition.N:
-                                        res =
-                                            "RN // if(Cc.S){PC = (short)((Memory[Sp + 1] << 8) | Memory[Sp]); SP += 2;}";
-                                        break;
-                                }
+                                    CompareCondition.NZ =>
+                                        "RNZ // if(!Cc.Z){PC = (short)((Memory[Sp + 1] << 8) | Memory[Sp]); SP += 2;}",
+                                    CompareCondition.Z =>
+                                        "RZ // if(Cc.Z){PC = (short)((Memory[Sp + 1] << 8) | Memory[Sp]); SP += 2;}",
+                                    CompareCondition.NC =>
+                                        "RNC // if(!Cc.Cy){PC = (short)((Memory[Sp + 1] << 8) | Memory[Sp]); SP += 2;}",
+                                    CompareCondition.C =>
+                                        "RC // if(Cc.Cy){PC = (short)((Memory[Sp + 1] << 8) | Memory[Sp]); SP += 2;}",
+                                    CompareCondition.PO =>
+                                        "RPO // if(!Cc.P){PC = (short)((Memory[Sp + 1] << 8) | Memory[Sp]); SP += 2;}",
+                                    CompareCondition.PE =>
+                                        "RPE // if(Cc.P){PC = (short)((Memory[Sp + 1] << 8) | Memory[Sp]); SP += 2;}",
+                                    CompareCondition.P =>
+                                        "RP // if(!Cc.S){PC = (short)((Memory[Sp + 1] << 8) | Memory[Sp]); SP += 2;}",
+                                    CompareCondition.N =>
+                                        "RN // if(Cc.S){PC = (short)((Memory[Sp + 1] << 8) | Memory[Sp]); SP += 2;}",
+                                    _ => res
+                                };
                             }
                                 break;
                             case 0b001:
                             {
                                 var reg = "";
                                 cyc += 10;
-                                switch ((Rp)((mem[pos] >> 4) & 0b11))
+                                reg = (Rp)((mem[pos] >> 4) & 0b11) switch
                                 {
-                                    case Rp.BC:
-                                        reg = "BC";
-                                        break;
-                                    case Rp.DE:
-                                        reg = "DE";
-                                        break;
-                                    case Rp.HL:
-                                        reg = "HL";
-                                        break;
-                                    case Rp.SP:
-                                        reg = "PSW";
-                                        break;
-                                }
+                                    Rp.BC => "BC",
+                                    Rp.DE => "DE",
+                                    Rp.HL => "HL",
+                                    Rp.SP => "PSW",
+                                    _ => reg
+                                };
 
                                 res = $"POP {reg} // {reg} = (short)((Memory[Sp + 1] << 8) | Memory[Sp]); SP += 2;";
                             }
@@ -824,35 +703,18 @@ public class Intel8008
                                 cyc += 10;
                                 var addr = (short)((mem[pos + 2] << 8) | mem[pos + 1]);
                                 offset += 2;
-                                switch ((CompareCondition)((mem[pos] >> 3) & 0b111))
+                                res = (CompareCondition)((mem[pos] >> 3) & 0b111) switch
                                 {
-                                    case CompareCondition.NZ:
-                                        res =
-                                            $"JNZ 0x{addr:X4} // if(!Cc.Z){{PC = 0x{addr:X4};}}";
-                                        break;
-                                    case CompareCondition.Z:
-                                        res = $"JZ 0x{addr:X4} // if(Cc.Z){{PC = 0x{addr:X4};}}";
-                                        break;
-                                    case CompareCondition.NC:
-                                        res =
-                                            $"JNC 0x{addr:X4} // if(!Cc.Cy){{PC = 0x{addr:X4};}}";
-                                        break;
-                                    case CompareCondition.C:
-                                        res = $"JC 0x{addr:X4} // if(Cc.Cy){{PC = 0x{addr:X4};}}";
-                                        break;
-                                    case CompareCondition.PO:
-                                        res = $"JPO 0x{addr:X4} // if(!Cc.P){{PC = 0x{addr:X4};}}";
-                                        break;
-                                    case CompareCondition.PE:
-                                        res = $"JPE 0x{addr:X4} // if(Cc.P){{PC = 0x{addr:X4};}}";
-                                        break;
-                                    case CompareCondition.P:
-                                        res = $"JP 0x{addr:X4} // if(Cc.S){{PC = 0x{addr:X4};}}";
-                                        break;
-                                    case CompareCondition.N:
-                                        res = $"JN 0x{addr:X4} // if(!Cc.S){{PC = 0x{addr:X4};}}";
-                                        break;
-                                }
+                                    CompareCondition.NZ => $"JNZ 0x{addr:X4} // if(!Cc.Z){{PC = 0x{addr:X4};}}",
+                                    CompareCondition.Z => $"JZ 0x{addr:X4} // if(Cc.Z){{PC = 0x{addr:X4};}}",
+                                    CompareCondition.NC => $"JNC 0x{addr:X4} // if(!Cc.Cy){{PC = 0x{addr:X4};}}",
+                                    CompareCondition.C => $"JC 0x{addr:X4} // if(Cc.Cy){{PC = 0x{addr:X4};}}",
+                                    CompareCondition.PO => $"JPO 0x{addr:X4} // if(!Cc.P){{PC = 0x{addr:X4};}}",
+                                    CompareCondition.PE => $"JPE 0x{addr:X4} // if(Cc.P){{PC = 0x{addr:X4};}}",
+                                    CompareCondition.P => $"JP 0x{addr:X4} // if(Cc.S){{PC = 0x{addr:X4};}}",
+                                    CompareCondition.N => $"JN 0x{addr:X4} // if(!Cc.S){{PC = 0x{addr:X4};}}",
+                                    _ => res
+                                };
                             }
                                 break;
                             case 0b100:
@@ -860,41 +722,26 @@ public class Intel8008
                                 cyc += 15; // 11 - 17
                                 var addr = (short)((mem[pos + 2] << 8) | mem[pos + 1]);
                                 offset += 2;
-                                switch ((CompareCondition)((mem[pos] >> 3) & 0b111))
+                                res = (CompareCondition)((mem[pos] >> 3) & 0b111) switch
                                 {
-                                    case CompareCondition.NZ:
-                                        res =
-                                            $"CNZ 0x{addr:X}// if(!Cc.Z){{SP -= 2; Memory[SP] = (byte)(PC&0xFF); Memory[SP+1] = (byte)((PC>>8)&0xFF); PC = 0x{addr:X}}}";
-                                        break;
-                                    case CompareCondition.Z:
-                                        res =
-                                            $"CZ 0x{addr:X}// if(Cc.Z){{SP -= 2; Memory[SP] = (byte)(PC&0xFF); Memory[SP+1] = (byte)((PC>>8)&0xFF); PC = 0x{addr:X}}}";
-                                        break;
-                                    case CompareCondition.NC:
-                                        res =
-                                            $"CNC 0x{addr:X}// if(!Cc.Cy){{SP -= 2; Memory[SP] = (byte)(PC&0xFF); Memory[SP+1] = (byte)((PC>>8)&0xFF); PC = 0x{addr:X}}}";
-                                        break;
-                                    case CompareCondition.C:
-                                        res =
-                                            $"CC 0x{addr:X}// if(Cc.Cy){{SP -= 2; Memory[SP] = (byte)(PC&0xFF); Memory[SP+1] = (byte)((PC>>8)&0xFF); PC = 0x{addr:X}}}";
-                                        break;
-                                    case CompareCondition.PO:
-                                        res =
-                                            $"CPO 0x{addr:X}// if(!Cc.P){{SP -= 2; Memory[SP] = (byte)(PC&0xFF); Memory[SP+1] = (byte)((PC>>8)&0xFF); PC = 0x{addr:X}}}";
-                                        break;
-                                    case CompareCondition.PE:
-                                        res =
-                                            $"CPE 0x{addr:X}// if(Cc.P){{SP -= 2; Memory[SP] = (byte)(PC&0xFF); Memory[SP+1] = (byte)((PC>>8)&0xFF); PC = 0x{addr:X}}}";
-                                        break;
-                                    case CompareCondition.P:
-                                        res =
-                                            $"CP 0x{addr:X}// if(Cc.S){{SP -= 2; Memory[SP] = (byte)(PC&0xFF); Memory[SP+1] = (byte)((PC>>8)&0xFF); PC = 0x{addr:X}}}";
-                                        break;
-                                    case CompareCondition.N:
-                                        res =
-                                            $"CN 0x{addr:X}// if(!Cc.S){{SP -= 2; Memory[SP] = (byte)(PC&0xFF); Memory[SP+1] = (byte)((PC>>8)&0xFF); PC = 0x{addr:X}}}";
-                                        break;
-                                }
+                                    CompareCondition.NZ =>
+                                        $"CNZ 0x{addr:X}// if(!Cc.Z){{SP -= 2; Memory[SP] = (byte)(PC&0xFF); Memory[SP+1] = (byte)((PC>>8)&0xFF); PC = 0x{addr:X}}}",
+                                    CompareCondition.Z =>
+                                        $"CZ 0x{addr:X}// if(Cc.Z){{SP -= 2; Memory[SP] = (byte)(PC&0xFF); Memory[SP+1] = (byte)((PC>>8)&0xFF); PC = 0x{addr:X}}}",
+                                    CompareCondition.NC =>
+                                        $"CNC 0x{addr:X}// if(!Cc.Cy){{SP -= 2; Memory[SP] = (byte)(PC&0xFF); Memory[SP+1] = (byte)((PC>>8)&0xFF); PC = 0x{addr:X}}}",
+                                    CompareCondition.C =>
+                                        $"CC 0x{addr:X}// if(Cc.Cy){{SP -= 2; Memory[SP] = (byte)(PC&0xFF); Memory[SP+1] = (byte)((PC>>8)&0xFF); PC = 0x{addr:X}}}",
+                                    CompareCondition.PO =>
+                                        $"CPO 0x{addr:X}// if(!Cc.P){{SP -= 2; Memory[SP] = (byte)(PC&0xFF); Memory[SP+1] = (byte)((PC>>8)&0xFF); PC = 0x{addr:X}}}",
+                                    CompareCondition.PE =>
+                                        $"CPE 0x{addr:X}// if(Cc.P){{SP -= 2; Memory[SP] = (byte)(PC&0xFF); Memory[SP+1] = (byte)((PC>>8)&0xFF); PC = 0x{addr:X}}}",
+                                    CompareCondition.P =>
+                                        $"CP 0x{addr:X}// if(Cc.S){{SP -= 2; Memory[SP] = (byte)(PC&0xFF); Memory[SP+1] = (byte)((PC>>8)&0xFF); PC = 0x{addr:X}}}",
+                                    CompareCondition.N =>
+                                        $"CN 0x{addr:X}// if(!Cc.S){{SP -= 2; Memory[SP] = (byte)(PC&0xFF); Memory[SP+1] = (byte)((PC>>8)&0xFF); PC = 0x{addr:X}}}",
+                                    _ => res
+                                };
                             }
                                 break;
                             case 0b101:
@@ -919,33 +766,18 @@ public class Intel8008
                                 var data = mem[pos + 1];
                                 offset += 1;
 
-                                switch ((Alu)((mem[pos] >> 3) & 0b111))
+                                res = (Alu)((mem[pos] >> 3) & 0b111) switch
                                 {
-                                    case Alu.ADD:
-                                        res = $"ADI 0x{data:X2} // A = A + 0x{data:X2};";
-                                        break;
-                                    case Alu.ADC:
-                                        res = $"ACI 0x{data:X2} // A = A + 0x{data:X2} + Cy";
-                                        break;
-                                    case Alu.SUB:
-                                        res = $"SUI 0x{data:X2} // A = A - 0x{data:X2}";
-                                        break;
-                                    case Alu.SBB:
-                                        res = $"SBI 0x{data:X2} // A = A - 0x{data:X2} - Cy";
-                                        break;
-                                    case Alu.ANA:
-                                        res = $"ANI 0x{data:X2} // A = A & 0x{data:X2}";
-                                        break;
-                                    case Alu.XRA:
-                                        res = $"XRI 0x{data:X2} // A = A ^ 0x{data:X2}";
-                                        break;
-                                    case Alu.ORA:
-                                        res = $"ORI 0x{data:X2} // A = A | 0x{data:X2}";
-                                        break;
-                                    case Alu.CMP:
-                                        res = $"CPI 0x{data:X2} // A = A - 0x{data:X2}";
-                                        break;
-                                }
+                                    Alu.ADD => $"ADI 0x{data:X2} // A = A + 0x{data:X2};",
+                                    Alu.ADC => $"ACI 0x{data:X2} // A = A + 0x{data:X2} + Cy",
+                                    Alu.SUB => $"SUI 0x{data:X2} // A = A - 0x{data:X2}",
+                                    Alu.SBB => $"SBI 0x{data:X2} // A = A - 0x{data:X2} - Cy",
+                                    Alu.ANA => $"ANI 0x{data:X2} // A = A & 0x{data:X2}",
+                                    Alu.XRA => $"XRI 0x{data:X2} // A = A ^ 0x{data:X2}",
+                                    Alu.ORA => $"ORI 0x{data:X2} // A = A | 0x{data:X2}",
+                                    Alu.CMP => $"CPI 0x{data:X2} // A = A - 0x{data:X2}",
+                                    _ => res
+                                };
                             }
                                 break;
                             case 0b111:
@@ -968,7 +800,7 @@ public class Intel8008
         return res;
     }
 
-    public bool run(uint numCycles = 1, bool cpudiag = false, bool safe = false, bool print_debug = false)
+    public (bool, uint) run(bool cpudiag = false, bool safe = false, bool print_debug = false)
     {
         var startCycles = cycles;
         short offset;
@@ -978,36 +810,31 @@ public class Intel8008
             cout = new StringBuilder();
         }
 
-        var u = (cycles - startCycles);
-        do
+        if (print_debug)
         {
-            u = (cycles - startCycles);
-            if (print_debug)
-            {
-                cout!.AppendLine(GetCurrentInstrAsString());
-            }
+            cout!.AppendLine(GetCurrentInstrAsString());
+        }
 
-            if (safe)
-            {
-                ExecuteSafe(PC, out offset, cpudiag);
-            }
-            else
-            {
-                Execute(PC, out offset, cpudiag);
-            }
+        if (safe)
+        {
+            ExecuteSafe(PC, out offset, cpudiag);
+        }
+        else
+        {
+            Execute(PC, out offset, cpudiag);
+        }
 
-            if (!JmpWasExecuted)
-            {
-                PC += (ushort)offset;
-            }
-        } while (offset != 0 && (cycles - startCycles) <= numCycles);
+        if (!JmpWasExecuted)
+        {
+            PC += (ushort)offset;
+        }
 
         if (print_debug)
         {
             Console.Out.WriteLine(cout!.ToString());
         }
 
-        return offset != 0;
+        return (offset != 0, cycles - startCycles);
     }
 
     private void Execute(ushort pos, out short offset, bool cpudiag = false)
@@ -1097,9 +924,9 @@ public class Intel8008
                     {
                         cycles += 4;
                         byte corr = 0;
-                        byte lsb = (byte)(A & 0x0F);
-                        byte msb = (byte)(A >> 4);
-                        bool cy = Cc.Cy;
+                        var lsb = (byte)(A & 0x0F);
+                        var msb = (byte)(A >> 4);
+                        var cy = Cc.Cy;
                         if (Cc.Ac || lsb > 0x09)
                         {
                             corr = 0x06;
@@ -1111,7 +938,7 @@ public class Intel8008
                             cy = true;
                         }
 
-                        Cc.Ac = ((A & 0x0F) + (corr & 0x0F) & 0b10000) != 0;
+                        Cc.Ac = (((A & 0x0F) + (corr & 0x0F)) & 0b10000) != 0;
                         A += corr;
                         Cc.Cy = cy;
 
@@ -1197,6 +1024,8 @@ public class Intel8008
                                     case Rp.SP:
                                         SP = data;
                                         break;
+                                    default:
+                                        throw new UnreachableException();
                                 }
                             }
                                 break;
@@ -1215,6 +1044,8 @@ public class Intel8008
                                         throw new UnreachableException("INVALID_REGISTER -> HL");
                                     case Rp.SP:
                                         throw new UnreachableException("INVALID_REGISTER -> SP");
+                                    default:
+                                        throw new UnreachableException();
                                 }
                             }
                                 break;
@@ -1235,27 +1066,22 @@ public class Intel8008
                                     case Rp.SP:
                                         SP = AluAddX(SP, 1, false, Flags.NONE);
                                         break;
+                                    default:
+                                        throw new UnreachableException();
                                 }
                             }
                                 break;
                             case 0b1001:
                             {
                                 cycles += 10;
-                                switch ((Rp)((Memory[pos] >> 4) & 0b11))
+                                HL = (Rp)((Memory[pos] >> 4) & 0b11) switch
                                 {
-                                    case Rp.BC:
-                                        HL = AluAddX(HL, BC, true, Flags.CY);
-                                        break;
-                                    case Rp.DE:
-                                        HL = AluAddX(HL, DE, true, Flags.CY);
-                                        break;
-                                    case Rp.HL:
-                                        HL = AluAddX(HL, HL, true, Flags.CY);
-                                        break;
-                                    case Rp.SP:
-                                        HL = AluAddX(HL, SP, true, Flags.CY);
-                                        break;
-                                }
+                                    Rp.BC => AluAddX(HL, BC, true, Flags.CY),
+                                    Rp.DE => AluAddX(HL, DE, true, Flags.CY),
+                                    Rp.HL => AluAddX(HL, HL, true, Flags.CY),
+                                    Rp.SP => AluAddX(HL, SP, true, Flags.CY),
+                                    _ => HL
+                                };
                             }
                                 break;
                             case 0b1010:
@@ -1289,6 +1115,8 @@ public class Intel8008
                                     case Rp.SP:
                                         SP = AluSubX(SP, 1, false, Flags.NONE);
                                         break;
+                                    default:
+                                        throw new UnreachableException();
                                 }
                             }
                                 break;
@@ -1331,6 +1159,8 @@ public class Intel8008
                                                 cycles += 5;
                                                 A = AluAdd(A, 1, true, Flags.Z | Flags.S | Flags.P | Flags.AC);
                                                 break;
+                                            default:
+                                                throw new UnreachableException();
                                         }
                                     }
                                         break;
@@ -1370,6 +1200,8 @@ public class Intel8008
                                                 cycles += 5;
                                                 A = AluSub(A, 1, true, Flags.Z | Flags.S | Flags.P | Flags.AC);
                                                 break;
+                                            default:
+                                                throw new UnreachableException();
                                         }
                                     }
                                         break;
@@ -1411,6 +1243,8 @@ public class Intel8008
                                                 cycles += 5;
                                                 A = data;
                                                 break;
+                                            default:
+                                                throw new UnreachableException();
                                         }
                                     }
                                         break;
@@ -1447,7 +1281,7 @@ public class Intel8008
                             Reg.L => L,
                             Reg.M => M,
                             Reg.A => A,
-                            _ => throw new ArgumentOutOfRangeException()
+                            _ => throw new UnreachableException()
                         };
 
                         switch ((Reg)((Memory[pos] >> 3) & 0b111))
@@ -1477,7 +1311,7 @@ public class Intel8008
                                 A = v;
                                 break;
                             default:
-                                throw new ArgumentOutOfRangeException();
+                                throw new UnreachableException();
                         }
                     }
                         break;
@@ -1527,7 +1361,7 @@ public class Intel8008
                         AluCmp(A, v);
                         break;
                     default:
-                        break;
+                        throw new UnreachableException();
                 }
             }
                 break;
@@ -1686,7 +1520,7 @@ public class Intel8008
                                         PSW = LoadShortFromMemory(SP);
                                         break;
                                     default:
-                                        throw new ArgumentOutOfRangeException();
+                                        throw new UnreachableException();
                                 }
 
                                 SP += 2;
@@ -1789,6 +1623,8 @@ public class Intel8008
                                     case Alu.CMP:
                                         AluCmp(A, data);
                                         break;
+                                    default:
+                                        throw new UnreachableException();
                                 }
                             }
                                 break;
@@ -1824,20 +1660,6 @@ public class Intel8008
         //Console.Out.WriteLine("Disable interrupts");
     }
 
-    private ushort PSW
-    {
-        get => (ushort)((A << 8) | Cc.GetAsValue());
-        set
-        {
-            A = (byte)((value >> 8) & 0xFF);
-            Cc.SetAsValue((byte)(value & 0xFF));
-        }
-    }
-
-    public Intel8008(string pathToFile, ushort mirrorRam) : this(File.ReadAllBytes(pathToFile), mirrorRam)
-    {
-    }
-
     private ushort AluAddX(ushort a, ushort b, bool setFlags, Flags flags = Flags.ALL, bool c = false)
     {
         var l = AluAdd((byte)(a & 0xFF), (byte)(b & 0xFF), setFlags, flags, c);
@@ -1845,7 +1667,7 @@ public class Intel8008
         return (ushort)((h << 8) | l);
     }
 
-    private ushort AluSubX(ushort a, ushort b, bool setFlags, Flags flags = Flags.ALL, bool c = false)
+    private ushort AluSubX(ushort a, ushort b, bool setFlags, Flags flags = Flags.ALL)
     {
         var tmp = Cc.Cy;
         var l = AluSub((byte)(a & 0xFF), (byte)(b & 0xFF), true, flags | Flags.CY);
@@ -1862,7 +1684,11 @@ public class Intel8008
     {
         var withCarry = c ? 1 : 0;
         var res = (ushort)(a + b + withCarry);
-        if (!setFlags) return (byte)(res & 0xFF);
+        if (!setFlags)
+        {
+            return (byte)(res & 0xFF);
+        }
+
         if (flags.HasFlag(Flags.AC))
         {
             Cc.Ac = (((a & 0x0F) + (b & 0x0F) + withCarry) & 0xF0) != 0;
@@ -1873,7 +1699,10 @@ public class Intel8008
         return (byte)(res & 0xFF);
     }
 
-    private byte AluCmp(byte a, byte b) => AluSub(a, b, true);
+    private void AluCmp(byte a, byte b)
+    {
+        AluSub(a, b, true);
+    }
 
     private byte AluSub(byte a, byte b, bool setFlags, Flags flags = Flags.ALL, bool c = false)
     {
@@ -1886,9 +1715,20 @@ public class Intel8008
         return (byte)(res & 0xFF);
     }
 
-    private byte AluAnd(byte a, byte b) => AluLogical((v1, v2) => (byte)(v1 & v2), a, b);
-    private byte AluXor(byte a, byte b) => AluLogical((v1, v2) => (byte)(v1 ^ v2), a, b);
-    private byte AluOr(byte a, byte b) => AluLogical((v1, v2) => (byte)(v1 | v2), a, b);
+    private byte AluAnd(byte a, byte b)
+    {
+        return AluLogical((v1, v2) => (byte)(v1 & v2), a, b);
+    }
+
+    private byte AluXor(byte a, byte b)
+    {
+        return AluLogical((v1, v2) => (byte)(v1 ^ v2), a, b);
+    }
+
+    private byte AluOr(byte a, byte b)
+    {
+        return AluLogical((v1, v2) => (byte)(v1 | v2), a, b);
+    }
 
     private byte AluLogical(Func<byte, byte, byte> op, byte a, byte b)
     {
@@ -1938,30 +1778,15 @@ public class Intel8008
         DisableInterrupts();
     }
 
-    public Intel8008(ushort mirrorRam = 0) : this([], mirrorRam)
-    {
-    }
-
     private void WriteToMemory(int addr, byte value)
     {
         if (addr >= ROM[0] && addr <= ROM[1])
         {
             throw new ArgumentException("Invalid address (ROM not writable)");
         }
+
         Memory[(ushort)addr] = value;
         Memory[(ushort)(addr + mirrorRam)] = value;
-        if (false)
-        {
-            switch (addr)
-            {
-                case < 0x2000:
-                    Console.Out.WriteLine($"Writing ROM not allowed {addr}\n");
-                    return;
-                case >= 0x4000:
-                    Console.Out.WriteLine($"Writing out of Space Invaders RAM not allowed {addr}\n");
-                    return;
-            }
-        }
     }
 
     private void WriteToMemory(int addr, ushort value)
@@ -1982,47 +1807,10 @@ public class Intel8008
 
     public void SetPin(Pin pin, bool value)
     {
-        switch (pin)
+        pins &= ~((ulong)1 << (int)(pin - 1));
+        if (value)
         {
-            case Pin.A10:
-            case Pin.D4:
-            case Pin.D5:
-            case Pin.D6:
-            case Pin.D7:
-            case Pin.D3:
-            case Pin.D2:
-            case Pin.D1:
-            case Pin.D0:
-            case Pin.INTE:
-            case Pin.DBIN:
-            case Pin.WR:
-            case Pin.SYNC:
-            case Pin.HLDA:
-            case Pin.WAIT:
-            case Pin.A0:
-            case Pin.A1:
-            case Pin.A2:
-            case Pin.A3:
-            case Pin.A4:
-            case Pin.A5:
-            case Pin.A6:
-            case Pin.A7:
-            case Pin.A8:
-            case Pin.A9:
-            case Pin.A15:
-            case Pin.A12:
-            case Pin.A13:
-            case Pin.A14:
-            case Pin.A11:
-                pins &= ~((ulong)1 << (int)(pin - 1));
-                if (value)
-                {
-                    pins |= (ulong)1 << (int)(pin - 1);
-                }
-
-                break;
-            default:
-                throw new InvalidConstraintException("Invalid pin: pin is not writable");
+            pins |= (ulong)1 << (int)(pin - 1);
         }
     }
 
@@ -2054,7 +1842,7 @@ public class Intel8008
 
     public static void RunTestSuite(bool cacheFile = false, bool print_debug = false)
     {
-        byte[] f = [];
+        byte[] f;
         var desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
         var filePath = Path.Combine(desktopPath, "cpudiag.bin");
         if (File.Exists(filePath))
@@ -2097,15 +1885,16 @@ public class Intel8008
              * 0x0047: MVI C, 0x09
              * 0x0049: CALL 0x5
              */
-            uint c = 0;
-            if (testCpu.PC == 0x689)
+            if (testCpu.PC != 0x689)
             {
-                Console.Out.WriteLine("ERROR IN PREV INSTR");
-                while (true)
-                {
-                }
+                continue;
             }
-        } while (testCpu.run(1, true, false, print_debug));
+
+            Console.Out.WriteLine("ERROR IN PREV INSTR");
+            while (true)
+            {
+            }
+        } while (testCpu.run(true, false, print_debug).Item1);
     }
 
     public string GetCurrentInstrAsString()
@@ -2143,4 +1932,17 @@ public class Intel8008
     {
         return new ArraySegment<byte>(Memory, start, end - start + 1);
     }
+
+    private readonly record struct State(
+        uint cycles,
+        ulong pins,
+        byte[] ports,
+        byte A,
+        ushort BC,
+        ushort DE,
+        ushort HL,
+        ushort SP,
+        ushort PC,
+        byte ConditionState,
+        byte[] mem);
 }

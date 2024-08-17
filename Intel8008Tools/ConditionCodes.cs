@@ -1,6 +1,6 @@
 ﻿namespace Intel8008Tools;
 
-public record struct ConditionCodes(bool Z, bool S, bool P, bool Cy, bool Ac, byte Pad)
+public record struct ConditionCodes(bool Z, bool S, bool P, bool Cy, bool Ac)
 {
     public byte GetAsValue()
     {
@@ -32,6 +32,7 @@ public record struct ConditionCodes(bool Z, bool S, bool P, bool Cy, bool Ac, by
 
     public override string ToString()
     {
-        return $"CC: 0b{GetAsValue():b8} (Cy:{(Cy ? 1 : 0)} P:{(P ? 1:0)} Ac:{(Ac ? 1:0)} Z:{(Z ? 1:0)} S:{(S ? 1:0)})";
+        return
+            $"CC: 0b{GetAsValue():b8} (Cy:{(Cy ? 1 : 0)} P:{(P ? 1 : 0)} Ac:{(Ac ? 1 : 0)} Z:{(Z ? 1 : 0)} S:{(S ? 1 : 0)})";
     }
 }
