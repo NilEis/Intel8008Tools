@@ -1445,7 +1445,7 @@ public class Intel8080
                                         Console.Out.WriteLine(builder.ToString());
                                         if (builder.ToString().Contains("CPU IS OPERATIONAL"))
                                         {
-                                            offset = -1;
+                                            PC = 0; //offset = -1;
                                         }
 
                                         break;
@@ -1697,7 +1697,7 @@ public class Intel8080
             return (byte)(res & 0xFF);
         }
 
-        if (flags.HasFlag(Flags.AC))
+        if ((flags & Flags.AC) != 0)
         {
             Cc.Ac = (((a & 0x0F) + (b & 0x0F) + withCarry) & 0xF0) != 0;
         }
@@ -1756,22 +1756,22 @@ public class Intel8080
 
     private void SetArithFlags(ushort res, Flags flags)
     {
-        if (flags.HasFlag(Flags.Z))
+        if ((flags & Flags.Z) != 0)
         {
             Z = (byte)(res & 0xFF);
         }
 
-        if (flags.HasFlag(Flags.S))
+        if ((flags & Flags.S) != 0)
         {
             S = (byte)(res & 0xFF);
         }
 
-        if (flags.HasFlag(Flags.P))
+        if ((flags & Flags.P) != 0)
         {
             P = (byte)(res & 0xFF);
         }
 
-        if (flags.HasFlag(Flags.CY))
+        if ((flags & Flags.CY) != 0)
         {
             Cc.Cy = res > 0xFF;
         }
@@ -1784,6 +1784,7 @@ public class Intel8080
         WriteToMemory(SP, PC);
         PC = (ushort)(8 * num);
         DisableInterrupts();
+        cycles += 11;
     }
 
     private void WriteToMemory(int addr, byte value)
