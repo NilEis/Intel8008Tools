@@ -1445,7 +1445,7 @@ public class Intel8080
                                         Console.Out.WriteLine(builder.ToString());
                                         if (builder.ToString().Contains("CPU IS OPERATIONAL"))
                                         {
-                                            PC = 0; //offset = -1;
+                                            offset = -1;
                                         }
 
                                         break;
