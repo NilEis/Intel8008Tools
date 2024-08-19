@@ -1680,7 +1680,7 @@ public class Intel8080
         var tmp = Cc.Cy;
         var l = AluSub((byte)(a & 0xFF), (byte)(b & 0xFF), true, flags | Flags.CY);
         var h = AluSub((byte)((a >> 8) & 0xFF), (byte)((b >> 8) & 0xFF), setFlags, flags, Cc.Cy);
-        if (!flags.HasFlag(Flags.CY))
+        if ((flags & Flags.CY) == 0)
         {
             Cc.Cy = tmp;
         }
