@@ -8,7 +8,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\Intel8080Tools\Intel8080Tools.csproj" />
+      <PackageReference Include="Sprache" Version="3.0.0-develop-00049" />
     </ItemGroup>
 
 </Project>

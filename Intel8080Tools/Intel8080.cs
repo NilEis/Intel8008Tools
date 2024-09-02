@@ -4,6 +4,7 @@ using System.Data;
 using System.Diagnostics;
 using System.Numerics;
 using System.Text;
+using AssemblerBackend;
 
 namespace Intel8080Tools;
 

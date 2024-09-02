@@ -21,4 +21,8 @@
         <None Include="../README.md" Pack="true" PackagePath=""/>
     </ItemGroup>
 
+    <ItemGroup>
+      <ProjectReference Include="..\AssemblerBackend\AssemblerBackend.csproj" />
+    </ItemGroup>
+
 </Project>
