@@ -152,7 +152,7 @@ public static partial class Assembler
             {
                 firstPassRes.Add(cmd.Value);
                 Console.Out.WriteLine(
-                    $"line: {cmd.Value.cmd} - {string.Join(" & ", cmd.Value.args)}");
+                    $"line: {cmd.Value.cmd} - {string.Join(" <-> ", cmd.Value.args)}");
                 continue;
             }
 
