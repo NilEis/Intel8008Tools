@@ -3,8 +3,11 @@
 public enum Rp : byte
 {
     BC = 0b00,
+    B = 0b00,
     DE = 0b01,
+    D = 0b01,
     HL = 0b10,
+    H = 0b10,
     SP = 0b11
 }
 
@@ -66,44 +69,84 @@ public enum CompareCondition : byte
 public enum Alu : byte
 {
     /// <summary>
-    ///     ADD ADI (A ← A + arg)
+    ///     ADD (A ← A + arg)
     /// </summary>
     ADD = 0b000,
 
     /// <summary>
-    ///     ADC ACI (A ← A + arg + Cy)
+    ///     ADI (A ← A + arg)
+    /// </summary>
+    ADI = 0b000,
+
+    /// <summary>
+    ///     ADC (A ← A + arg + Cy)
     /// </summary>
     ADC = 0b001,
 
     /// <summary>
-    ///     SUB SUI (A ← A - arg)
+    ///     ACI (A ← A + arg + Cy)
+    /// </summary>
+    ACI = 0b001,
+
+    /// <summary>
+    ///     SUB (A ← A - arg)
     /// </summary>
     SUB = 0b010,
 
     /// <summary>
-    ///     SBB SBI (A ← A - arg - Cy)
+    ///     SUI (A ← A - arg)
+    /// </summary>
+    SUI = 0b010,
+
+    /// <summary>
+    ///     SBB (A ← A - arg - Cy)
     /// </summary>
     SBB = 0b011,
 
     /// <summary>
-    ///     ANA ANI (A ← A ∧ arg)
+    ///     SBI (A ← A - arg - Cy)
+    /// </summary>
+    SBI = 0b011,
+
+    /// <summary>
+    ///     ANA (A ← A ∧ arg)
     /// </summary>
     ANA = 0b100,
 
     /// <summary>
-    ///     XRA XRI (A ← A ⊻ arg)
+    ///     ANI (A ← A ∧ arg)
+    /// </summary>
+    ANI = 0b100,
+
+    /// <summary>
+    ///     XRA (A ← A ⊻ arg)
     /// </summary>
     XRA = 0b101,
 
     /// <summary>
-    ///     ORA ORI (A ← A ∨ arg)
+    ///     XRI (A ← A ⊻ arg)
+    /// </summary>
+    XRI = 0b101,
+
+    /// <summary>
+    ///     ORA (A ← A ∨ arg)
     /// </summary>
     ORA = 0b110,
 
     /// <summary>
-    ///     CMP CPI (A - arg)
+    ///     ORI (A ← A ∨ arg)
     /// </summary>
-    CMP = 0b111
+    ORI = 0b110,
+
+    /// <summary>
+    ///     CMP (A - arg)
+    /// </summary>
+    CMP = 0b111,
+
+    /// <summary>
+    ///     CPI (A - arg)
+    /// </summary>
+    CPI = 0b111
 }
 
 public enum Opcode : byte
