@@ -34,6 +34,7 @@ const string input = """
                      resq 4
 
                      """;
+
 if (AssemblerBackend.Assembler.Assemble(input, out var b))
 {
     uint c = 0;
