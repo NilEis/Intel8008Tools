@@ -1,4 +1,6 @@
-﻿namespace Assembler;
+﻿using AssemblerBackend;
+
+namespace Assembler;
 
 using System.CommandLine;
 
@@ -8,22 +10,44 @@ class Assembler
     {
         var rootCmd = new RootCommand("A tool to (dis-)assemble intel 8080 code")
         {
-            BuildCmd((output, input) => { Console.Out.WriteLine(input); }),
-            DisasmCmd((input) => { Console.Out.WriteLine(input); })
+            BuildCmd((output, input) =>
+            {
+                if (AssemblerBackend.Assembler.Assemble(File.ReadAllText(input.FullName), out var mem))
+                {
+                    File.WriteAllBytes(output.FullName, mem);
+                }
+            }),
+            DisasmCmd((start, end, input) =>
+            {
+                var mem = File.ReadAllBytes(input.FullName);
+                uint c = 0;
+                ushort p = (ushort)(start < 0 ? 0 : start >= mem.Length ? mem.Length - 1 : start);
+                short o;
+                end = (end <= 0 || end > mem.Length) ? mem.Length : end;
+                while (p < end)
+                {
+                    Console.Out.WriteLine(Disassembler.Disassemble(p, mem, out o, ref c));
+                    p += (ushort)o;
+                }
+            })
         };
         rootCmd.Invoke(args);
     }
 
-    private static Command DisasmCmd(Action<FileInfo> handler)
+    private static Command DisasmCmd(Action<int, int, FileInfo> handler)
     {
+        var startOption = new Option<int>("--start", () => 0, "The start address for disassembling");
+        var endOption = new Option<int>("--end", () => -1, "The end address for disassembling");
         var fileArg = new Argument<FileInfo>("bin file", "the binary file to disassemble");
         var disasmCmd = new Command("dasm", "disassemble a binary file")
         {
+            startOption,
+            endOption,
             fileArg
         };
         disasmCmd.AddAlias("disasm");
         disasmCmd.AddAlias("d");
-        disasmCmd.SetHandler(handler, fileArg);
+        disasmCmd.SetHandler(handler, startOption, endOption, fileArg);
         return disasmCmd;
     }
 

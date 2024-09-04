@@ -1,4 +1,5 @@
-﻿using Intel8080Tools;
+﻿using AssemblerBackend;
+using Intel8080Tools;
 
 Intel8080.RunTestSuite(true);
 const string input = """
@@ -35,14 +36,14 @@ const string input = """
 
                      """;
 
-if (AssemblerBackend.Assembler.Assemble(input, out var b))
+if (Assembler.Assemble(input, out var b))
 {
     uint c = 0;
     ushort p = 0x1000;
     short o = 0;
     while (p < b.Length)
     {
-        Console.Out.WriteLine(Intel8080.Disassemble(p, b, out o, ref c));
+        Console.Out.WriteLine(Disassembler.Disassemble(p, b, out o, ref c));
         p += (ushort)o;
     }
 }
