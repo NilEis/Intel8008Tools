@@ -801,7 +801,7 @@ public class Intel8080
         }
 
         offset++;
-        return res;
+        return $"{pos:X4}: {res}";
     }
 
     public (bool, uint) run(bool cpudiag = false, bool safe = false, bool print_debug = false)
