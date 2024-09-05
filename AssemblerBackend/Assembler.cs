@@ -6,93 +6,120 @@ using Sprache;
 
 namespace AssemblerBackend;
 
-public static partial class Assembler
+public partial class Assembler
 {
     public static bool Assemble(string code, [NotNullWhen(true)] out byte[]? buf)
     {
         var memoryBuffer = new MemoryBuffer<byte>();
-        var codeWithoutComments = CommentRegEx().Replace(code, "\n");
-        var codeWithNormalizedLabels = LabelRegEx().Replace(codeWithoutComments, "\n");
-        var lines = codeWithNormalizedLabels.ToUpper().Split('\n',
-            StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        var codeWithoutComments = CommentRegEx().Replace(code, "");
+        var lines = codeWithoutComments.ToUpper().Split('\n', StringSplitOptions.TrimEntries)
+            .Select((l, i) => (line: l, index: i)).Where(v => v.line.Trim().Length != 0).ToArray();
         var addr = 0L;
         var lineToAddr = new Queue<long>();
+
+        Dictionary<string, long> labels = new();
+        Dictionary<string, long> variables = new();
+
         foreach (var line in lines)
         {
-            var label = LabelParser.TryParse(line);
+            var currentText = line.line;
+            var label = LabelParser().TryParse(currentText);
             if (label.WasSuccessful)
             {
-                Labels.Add(label.Value, addr);
-                continue;
+                labels.Add(label.Value, addr);
+                currentText = currentText.Replace(label.Value + ":", "").Trim();
             }
 
-            var org = OrgParser.TryParse(line);
-            if (org.WasSuccessful)
+            try
             {
-                addr = org.Value;
-                continue;
-            }
+                var org = OrgParser(variables).TryParse(currentText);
+                if (org.WasSuccessful)
+                {
+                    addr = org.Value;
+                    continue;
+                }
 
-            var dec = DeclareParser.TryParse(line);
-            if (dec.WasSuccessful)
-            {
-                lineToAddr.Enqueue(addr);
-                addr += dec.Value.Length;
-                continue;
-            }
+                var dec = DeclareParser(variables).TryParse(currentText);
+                if (dec.WasSuccessful)
+                {
+                    lineToAddr.Enqueue(addr);
+                    addr += dec.Value.Length;
+                    continue;
+                }
 
-            var res = ReserveParser.TryParse(line);
-            if (res.WasSuccessful)
-            {
-                lineToAddr.Enqueue(addr);
-                addr += res.Value.Length;
-                continue;
-            }
+                var res = ReserveParser(variables).TryParse(currentText);
+                if (res.WasSuccessful)
+                {
+                    lineToAddr.Enqueue(addr);
+                    addr += res.Value.Length;
+                    continue;
+                }
 
-            var size = MnemonicSizeParser.TryParse(line);
-            if (size.WasSuccessful)
+                var size = MnemonicSizeParser().TryParse(currentText);
+                if (size.WasSuccessful)
+                {
+                    lineToAddr.Enqueue(addr);
+                    addr += size.Value;
+                }
+            }
+            catch (Exception e)
             {
-                lineToAddr.Enqueue(addr);
-                addr += size.Value;
+                Console.Out.WriteLine($"{line.index + 1}: {e.Message}\n    {currentText}");
+                buf = memoryBuffer.ToArray();
+                return false;
             }
         }
 
         foreach (var line in lines)
         {
-            var label = LabelParser.TryParse(line);
+            var currentText = line.line;
+            var label = LabelParser().TryParse(currentText);
             if (label.WasSuccessful)
             {
-                continue;
+                currentText = currentText.Replace(label.Value + ":", "").Trim();
+                if (currentText.Length == 0)
+                {
+                    continue;
+                }
             }
 
-            var org = OrgParser.TryParse(line);
-            if (org.WasSuccessful)
+            try
             {
-                continue;
+                var org = OrgParser(variables).TryParse(currentText);
+                if (org.WasSuccessful)
+                {
+                    continue;
+                }
+
+                var dec = DeclareParser(variables).TryParse(currentText);
+                if (dec.WasSuccessful)
+                {
+                    addr = lineToAddr.Dequeue();
+                    memoryBuffer.AddRange(dec.Value, (int)addr);
+                    continue;
+                }
+
+                var res = ReserveParser(variables).TryParse(currentText);
+                if (res.WasSuccessful)
+                {
+                    addr = lineToAddr.Dequeue();
+                    memoryBuffer.AddRange(res.Value, (int)addr);
+
+                    continue;
+                }
+
+                var mnem = MnemonicParser(labels, variables).TryParse(currentText);
+                if (mnem.WasSuccessful)
+                {
+                    addr = lineToAddr.Dequeue();
+                    memoryBuffer.AddRange(mnem.Value, (int)addr);
+                }
             }
-
-            var dec = DeclareParser.TryParse(line);
-            if (dec.WasSuccessful)
+            catch (Exception e)
             {
-                addr = lineToAddr.Dequeue();
-                memoryBuffer.AddRange(dec.Value, (int)addr);
-                continue;
-            }
-
-            var res = ReserveParser.TryParse(line);
-            if (res.WasSuccessful)
-            {
-                addr = lineToAddr.Dequeue();
-                memoryBuffer.AddRange(res.Value, (int)addr);
-
-                continue;
-            }
-
-            var mnem = MnemonicParser.TryParse(line);
-            if (mnem.WasSuccessful)
-            {
-                addr = lineToAddr.Dequeue();
-                memoryBuffer.AddRange(mnem.Value, (int)addr);
+                Console.Out.WriteLine($"{line.index + 1}: {e.Message}\n    {currentText}");
+                buf = memoryBuffer.ToArray();
+                return false;
             }
         }
 
@@ -100,107 +127,145 @@ public static partial class Assembler
         return true;
     }
 
-    private static readonly Parser<long> NumberParser =
-        (
-            // Hexadecimal format: 1234h
-            from digits in Parse.Chars("0123456789ABCDEF").AtLeastOnce().Text()
-            from suffix in Parse.Char('H')
-            from end in Parse.WhiteSpace.Many().End()
-            select Convert.ToInt64(digits, 16)
-        )
-        .Or
-        (
-            // Hexadecimal format: 0x1234
-            from prefix in Parse.String("0X")
-            from digits in Parse.Chars("0123456789ABCDEF").AtLeastOnce().Text()
-            from end in Parse.WhiteSpace.Many().End()
-            select Convert.ToInt64(digits, 16)
-        )
-        .Or
-        (
-            // Binary format: 1010b
-            from digits in Parse.Chars("01").AtLeastOnce().Text()
-            from suffix in Parse.Char('B')
-            from end in Parse.WhiteSpace.Many().End()
-            select Convert.ToInt64(digits, 2)
-        )
-        .Or
-        (
-            // Binary format: 0b1010
-            from prefix in Parse.String("0B")
-            from digits in Parse.Chars("01").AtLeastOnce().Text()
-            from end in Parse.WhiteSpace.Many().End()
-            select Convert.ToInt64(digits, 2)
-        )
-        .Or
-        (
-            // Decimal format: 1234
-            Parse.Digit.AtLeastOnce().Text().Select(digits => Convert.ToInt64(digits, 10)
+    private static Parser<long> NumberParser()
+    {
+        return (
+                // Hexadecimal format: 1234h
+                from digits in Parse.Chars("0123456789ABCDEF").AtLeastOnce().Text()
+                from suffix in Parse.Char('H')
+                select Convert.ToInt64(digits, 16)
             )
-        );
+            .Or
+            (
+                // Hexadecimal format: 0x1234
+                from prefix in Parse.String("0X")
+                from digits in Parse.Chars("0123456789ABCDEF").AtLeastOnce().Text()
+                select Convert.ToInt64(digits, 16)
+            )
+            .Or
+            (
+                // Binary format: 1010b
+                from digits in Parse.Chars("01").AtLeastOnce().Text()
+                from suffix in Parse.Char('B')
+                select Convert.ToInt64(digits, 2)
+            )
+            .Or
+            (
+                // Binary format: 0b1010
+                from prefix in Parse.String("0B")
+                from digits in Parse.Chars("01").AtLeastOnce().Text()
+                select Convert.ToInt64(digits, 2)
+            )
+            .Or
+            (
+                // Decimal format: 1234
+                Parse.Digit.AtLeastOnce().Text().Select(digits => Convert.ToInt64(digits, 10)
+                )
+            );
+    }
 
-    private static readonly Parser<ushort> ImmediateParser = NumberParser.Select(v => (ushort)v);
+    private static Parser<ushort> ImmediateParser(Dictionary<string, long> variables)
+    {
+        return NumberParser().Or(
+            from prefix in Parse.Char('(').Once()
+            from num in NumberParser()
+            from postfix in Parse.Char(')').Once()
+            select num
+        ).Or(VariableParser(variables)).Select(v => (ushort)v);
+    }
 
-    private static readonly Parser<long> AddrParser =
-        Parse.Upper.AtLeastOnce().Text().Select(s => Labels[s]).Or(NumberParser).Token();
+    private static Parser<long> VariableParser(Dictionary<string, long> variables)
+    {
+        return from prefix in Parse.Char('(').Once()
+            from variable in Parse.Upper.AtLeastOnce().Text()
+            from postfix in Parse.Char(')').Once()
+            select variables.TryGetValue(variable, out var res)
+                ? res
+                : throw new ConstraintException($"Unknown variable {variable}");
+    }
 
-    private static readonly Parser<Reg> RegParser = Parse.Chars("BCDEHLMA").Token().Select(v =>
-        Enum.TryParse($"{v}", out Reg reg) ? reg : throw new ConstraintException("Invalid reg"));
+    private static Parser<long> AddrParser(Dictionary<string, long> labels)
+    {
+        return Parse.Upper.AtLeastOnce().Text().Select(s =>
+        {
+            if (labels.TryGetValue(s, out var addr))
+            {
+                return addr;
+            }
 
-    private static readonly Parser<Rp> DRegParser =
-        from dreg in Parse.String("BC").Token().Text()
-            .Or(Parse.String("B").Token().Text())
-            .Or(Parse.String("DE").Token().Text())
-            .Or(Parse.String("D").Token().Text())
-            .Or(Parse.String("HL").Token().Text())
-            .Or(Parse.String("H").Token().Text())
-            .Or(Parse.String("SP").Token().Text())
-            .Or(Parse.String("PSW").Token().Return("SP"))
-        select Enum.TryParse($"{dreg}", out Rp reg) ? reg : throw new ConstraintException("Invalid dreg");
+            throw new ConstraintException($"unknown label: {s}");
+        }).Or(NumberParser()).Token();
+    }
 
-    private static readonly Parser<(string cmd, string[] args)> AsmLineParser =
-        from cmd in Parse.Upper.Repeat(2, 4).Token().Text()
-        from args in NumberParser.Select(v => $"{v}").Or(Parse.Upper.AtLeastOnce().Text())
-            .DelimitedBy(Parse.Char(',').Token()).Repeat(0, 1).Select(v => v)
-        select (cmd, args: args.SelectMany(v => v).ToArray());
+    private static Parser<Reg> RegParser()
+    {
+        return Parse.Chars("BCDEHLMA").Token().Select(v =>
+            Enum.TryParse($"{v}", out Reg reg) ? reg : throw new ConstraintException("Invalid reg"));
+    }
 
-    private static readonly Parser<CompareCondition> CompareConditionParser =
-        from cc in Parse.String("NZ").Text()
-            .Or(Parse.String("Z").Text())
-            .Or(Parse.String("NC").Text())
-            .Or(Parse.String("C").Text())
-            .Or(Parse.String("PO").Text())
-            .Or(Parse.String("PE").Text())
-            .Or(Parse.String("P").Text())
-            .Or(Parse.String("N").Text())
-        select Enum.TryParse($"{cc}", out CompareCondition reg)
-            ? reg
-            : throw new ConstraintException("Invalid compare condition");
+    private static Parser<Rp> DRegParser()
+    {
+        return from dreg in Parse.String("BC").Token().Text()
+                .Or(Parse.String("B").Token().Text())
+                .Or(Parse.String("DE").Token().Text())
+                .Or(Parse.String("D").Token().Text())
+                .Or(Parse.String("HL").Token().Text())
+                .Or(Parse.String("H").Token().Text())
+                .Or(Parse.String("SP").Token().Text())
+                .Or(Parse.String("PSW").Token().Return("SP"))
+            select Enum.TryParse($"{dreg}", out Rp reg) ? reg : throw new ConstraintException("Invalid dreg");
+    }
 
-    private static readonly Parser<Alu> AluParser =
-        from alu in Parse.String("ADD").Text()
-            .Or(Parse.String("ADD").Text())
-            .Or(Parse.String("ADC").Text())
-            .Or(Parse.String("SUB").Text())
-            .Or(Parse.String("SBB").Text())
-            .Or(Parse.String("ANA").Text())
-            .Or(Parse.String("XRA").Text())
-            .Or(Parse.String("ORA").Text())
-            .Or(Parse.String("CMP").Text())
-            .Or(Parse.String("ADI").Text())
-            .Or(Parse.String("ACI").Text())
-            .Or(Parse.String("SUI").Text())
-            .Or(Parse.String("SBI").Text())
-            .Or(Parse.String("ANI").Text())
-            .Or(Parse.String("XRI").Text())
-            .Or(Parse.String("ORI").Text())
-            .Or(Parse.String("CPI").Text())
-        select Enum.TryParse($"{alu}", out Alu aluOp)
-            ? aluOp
-            : throw new ConstraintException("Invalid ALU operation");
+    private Parser<(string cmd, string[] args)> AsmLineParser()
+    {
+        return from cmd in Parse.Upper.Repeat(2, 4).Token().Text()
+            from args in NumberParser().Select(v => $"{v}").Or(Parse.Upper.AtLeastOnce().Text())
+                .DelimitedBy(Parse.Char(',').Token()).Repeat(0, 1).Select(v => v)
+            select (cmd, args: args.SelectMany(v => v).ToArray());
+    }
 
-    private static readonly Parser<int> MnemonicSizeParser =
-        Parse.String("NOP").Token().Return(1)
+    private static Parser<CompareCondition> CompareConditionParser()
+    {
+        return from cc in Parse.String("NZ").Text()
+                .Or(Parse.String("Z").Text())
+                .Or(Parse.String("NC").Text())
+                .Or(Parse.String("C").Text())
+                .Or(Parse.String("PO").Text())
+                .Or(Parse.String("PE").Text())
+                .Or(Parse.String("P").Text())
+                .Or(Parse.String("N").Text())
+            select Enum.TryParse($"{cc}", out CompareCondition reg)
+                ? reg
+                : throw new ConstraintException("Invalid compare condition");
+    }
+
+    private static Parser<Alu> AluParser()
+    {
+        return from alu in Parse.String("ADD").Text()
+                .Or(Parse.String("ADD").Text())
+                .Or(Parse.String("ADC").Text())
+                .Or(Parse.String("SUB").Text())
+                .Or(Parse.String("SBB").Text())
+                .Or(Parse.String("ANA").Text())
+                .Or(Parse.String("XRA").Text())
+                .Or(Parse.String("ORA").Text())
+                .Or(Parse.String("CMP").Text())
+                .Or(Parse.String("ADI").Text())
+                .Or(Parse.String("ACI").Text())
+                .Or(Parse.String("SUI").Text())
+                .Or(Parse.String("SBI").Text())
+                .Or(Parse.String("ANI").Text())
+                .Or(Parse.String("XRI").Text())
+                .Or(Parse.String("ORI").Text())
+                .Or(Parse.String("CPI").Text())
+            select Enum.TryParse($"{alu}", out Alu aluOp)
+                ? aluOp
+                : throw new ConstraintException("Invalid ALU operation");
+    }
+
+    private static Parser<int> MnemonicSizeParser()
+    {
+        return Parse.String("NOP").Token().Return(1)
             .Or(Parse.String("LXI").Token().Return(3))
             .Or(Parse.String("STAX").Token().Return(1))
             .Or(Parse.String("INX").Token().Return(1))
@@ -235,7 +300,7 @@ public static partial class Assembler
             .Or(
                 (
                     from s in Parse.String("R")
-                    from cc in CompareConditionParser
+                    from cc in CompareConditionParser()
                     select cc
                 ).Token().Return(1)
             )
@@ -243,7 +308,7 @@ public static partial class Assembler
             .Or(
                 (
                     from s in Parse.String("J")
-                    from cc in CompareConditionParser
+                    from cc in CompareConditionParser()
                     select cc
                 ).Token().Return(3)
             )
@@ -251,7 +316,7 @@ public static partial class Assembler
             .Or(
                 (
                     from s in Parse.String("C")
-                    from cc in CompareConditionParser
+                    from cc in CompareConditionParser()
                     select cc
                 ).Token().Return(3)
             )
@@ -275,9 +340,11 @@ public static partial class Assembler
             .Or(Parse.String("DI").Token().Return(1))
             .Or(Parse.String("SPHL").Token().Return(1))
             .Or(Parse.String("EI").Token().Return(1));
+    }
 
-    private static readonly Parser<byte[]> MnemonicParser =
-        Parse.String("NOP").Token().Return((byte[]) [0b00000000])
+    private static Parser<byte[]> MnemonicParser(Dictionary<string, long> labels, Dictionary<string, long> variables)
+    {
+        return Parse.String("NOP").Token().Return((byte[]) [0b00000000])
             .Or(Parse.String("RLC").Token().Return((byte[]) [0b00000111]))
             .Or(Parse.String("RRC").Token().Return((byte[]) [0b00001111]))
             .Or(Parse.String("RAL").Token().Return((byte[]) [0b00010111]))
@@ -296,9 +363,9 @@ public static partial class Assembler
             .Or(Parse.String("EI").Token().Return((byte[]) [0b11111011]))
             .Or(
                 from cmd in Parse.String("LXI").Token().Return((byte)0b00000001)
-                from rp in DRegParser
+                from rp in DRegParser()
                 from infix in Parse.Char(',').Token()
-                from num in ImmediateParser
+                from num in ImmediateParser(variables)
                 select (byte[])
                 [
                     (byte)(cmd | (byte)((byte)rp << 5)),
@@ -308,118 +375,118 @@ public static partial class Assembler
             )
             .Or(
                 from cmd in Parse.String("STAX").Token().Return((byte)0b00000010)
-                from rp in DRegParser
+                from rp in DRegParser()
                 select (byte[]) [(byte)(cmd | (byte)((byte)rp << 4))]
             )
             .Or(
                 from cmd in Parse.String("INX").Token().Return((byte)0b00000011)
-                from rp in DRegParser
+                from rp in DRegParser()
                 select (byte[]) [(byte)(cmd | (byte)((byte)rp << 4))]
             )
             .Or(
                 from cmd in Parse.String("INR").Token().Return((byte)0b00000100)
-                from reg in RegParser
+                from reg in RegParser()
                 select (byte[]) [(byte)(cmd | (byte)((byte)reg << 3))]
             )
             .Or(
                 from cmd in Parse.String("DCR").Token().Return((byte)0b00000101)
-                from reg in RegParser
+                from reg in RegParser()
                 select (byte[]) [(byte)(cmd | (byte)((byte)reg << 3))]
             )
             .Or(
                 from cmd in Parse.String("MVI").Token().Return((byte)0b00000110)
-                from reg in RegParser
+                from reg in RegParser()
                 from infix in Parse.Char(',').Token()
-                from num in ImmediateParser
+                from num in ImmediateParser(variables)
                 select (byte[]) [(byte)(cmd | (byte)((byte)reg << 3)), (byte)num]
             )
             .Or(
                 from cmd in Parse.String("DAD").Token().Return((byte)0b00001001)
-                from rp in DRegParser
+                from rp in DRegParser()
                 select (byte[]) [(byte)(cmd | (byte)((byte)rp << 4))]
             )
             .Or(
                 from cmd in Parse.String("LDAX").Token().Return((byte)0b00001010)
-                from rp in DRegParser
+                from rp in DRegParser()
                 select (byte[]) [(byte)(cmd | (byte)((byte)rp << 4))]
             )
             .Or(
                 from cmd in Parse.String("DCX").Token().Return((byte)0b00001011)
-                from rp in DRegParser
+                from rp in DRegParser()
                 select (byte[]) [(byte)(cmd | (byte)((byte)rp << 4))]
             )
             .Or(
                 from cmd in Parse.String("SHLD").Token().Return((byte)0b00100010)
-                from num in NumberParser
+                from num in NumberParser()
                 select (byte[]) [cmd, (byte)num, (byte)(num >> 8)]
             )
             .Or(
                 from cmd in Parse.String("LHLD").Token().Return((byte)0b00101010)
-                from num in NumberParser
+                from num in NumberParser()
                 select (byte[]) [cmd, (byte)num, (byte)(num >> 8)]
             )
             .Or(
                 from cmd in Parse.String("STA").Token().Return((byte)0b00110010)
-                from num in NumberParser
+                from num in NumberParser()
                 select (byte[]) [cmd, (byte)num, (byte)(num >> 8)]
             )
             .Or(
                 from cmd in Parse.String("LDA").Token().Return((byte)0b00111010)
-                from num in NumberParser
+                from num in NumberParser()
                 select (byte[]) [cmd, (byte)num, (byte)(num >> 8)]
             )
             .Or(
                 from cmd in Parse.String("MOV").Token().Return((byte)0b01000000)
-                from destReg in RegParser
+                from destReg in RegParser()
                 from infix in Parse.Char(',').Token()
-                from srcReg in RegParser
+                from srcReg in RegParser()
                 select (byte[]) [(byte)((cmd | (byte)srcReg) | (byte)((byte)destReg << 3))]
             )
             .Or(
-                from cmd in AluParser.Token().Select(v => (byte)(0b10000000 | (byte)((byte)v << 3)))
-                from srcReg in RegParser
+                from cmd in AluParser().Token().Select(v => (byte)(0b10000000 | (byte)((byte)v << 3)))
+                from srcReg in RegParser()
                 select (byte[]) [(byte)(cmd | (byte)srcReg)]
             )
             .Or(
                 from p in Parse.Char('R').Return((byte)0b11000000)
-                from op in CompareConditionParser
+                from op in CompareConditionParser()
                 select (byte[]) [(byte)(p | (byte)((byte)op << 3))]
             )
             .Or(
                 from cmd in Parse.String("POP").Token().Return((byte)0b11000001)
-                from rp in DRegParser
+                from rp in DRegParser()
                 select (byte[]) [(byte)(cmd | (byte)((byte)rp << 4))]
             )
             .Or(
                 from j in Parse.Char('J').Return((byte)0b11000010)
-                from op in CompareConditionParser
-                from addr in AddrParser.Token()
+                from op in CompareConditionParser()
+                from addr in AddrParser(labels).Token()
                 select (byte[]) [(byte)(j | (byte)((byte)op << 3)), (byte)addr, (byte)(addr >> 8)]
             )
             .Or(
                 from j in Parse.String("JMP").Return((byte)0b11000011)
-                from addr in AddrParser.Token()
+                from addr in AddrParser(labels).Token()
                 select (byte[]) [j, (byte)addr, (byte)(addr >> 8)]
             )
             .Or(
                 from c in Parse.Char('C').Return((byte)0b11000100)
-                from op in CompareConditionParser
-                from addr in AddrParser.Token()
+                from op in CompareConditionParser()
+                from addr in AddrParser(labels).Token()
                 select (byte[]) [(byte)(c | (byte)((byte)op << 3)), (byte)addr, (byte)(addr >> 8)]
             )
             .Or(
                 from cmd in Parse.String("PUSH").Token().Return((byte)0b11000101)
-                from rp in DRegParser
+                from rp in DRegParser()
                 select (byte[]) [(byte)(cmd | (byte)((byte)rp << 4))]
             )
             .Or(
-                from cmd in AluParser.Token().Select(v => (byte)(0b11000110 | (byte)((byte)v << 3)))
-                from num in ImmediateParser.Select(v => (byte)v)
+                from cmd in AluParser().Token().Select(v => (byte)(0b11000110 | (byte)((byte)v << 3)))
+                from num in ImmediateParser(variables).Select(v => (byte)v)
                 select (byte[]) [cmd, num]
             )
             .Or(
                 from cmd in Parse.String("RST").Return((byte)0b11000111)
-                from i in AddrParser.Select(v =>
+                from i in AddrParser(labels).Select(v =>
                     v <= 0b111
                         ? v
                         : throw new ConstraintException($"RST can only call addresses smaller than {0b1000}"))
@@ -427,78 +494,85 @@ public static partial class Assembler
             )
             .Or(
                 from cmd in Parse.String("CALL").Return((byte)0b11001101)
-                from addr in AddrParser.Token()
+                from addr in AddrParser(labels).Token()
                 select (byte[]) [cmd, (byte)addr, (byte)(addr >> 8)]
             )
             .Or(
                 from cmd in Parse.String("OUT").Return((byte)0b11010011)
-                from addr in ImmediateParser
+                from addr in ImmediateParser(variables)
                 select (byte[]) [cmd, (byte)addr, (byte)(addr >> 8)]
             )
             .Or(
                 from cmd in Parse.String("IN").Return((byte)0b11011011)
-                from addr in ImmediateParser
+                from addr in ImmediateParser(variables)
                 select (byte[]) [cmd, (byte)addr, (byte)(addr >> 8)]
             )
             .Or(Parse.AnyChar.Many().Select(v =>
                 false ? (byte[]) [1] : throw new ConstraintException($"Invalid operation: {string.Join("", v)}")));
+    }
 
-    private static readonly Parser<long> OrgParser =
-        from org in Parse.String("ORG").Once()
-        from whiteSpace in Parse.WhiteSpace.Many()
-        from num in ImmediateParser
-        from whiteSpaceEnd in Parse.WhiteSpace.Many()
-        select (long)num;
+    private static Parser<long> OrgParser(Dictionary<string, long> variables)
+    {
+        return from org in Parse.String("ORG").Once()
+            from whiteSpace in Parse.WhiteSpace.Many()
+            from num in ImmediateParser(variables)
+            from whiteSpaceEnd in Parse.WhiteSpace.Many()
+            select (long)num;
+    }
 
-    private static readonly Parser<byte[]> DeclareParser =
-        from prefix in Parse.Char('D').Once()
-        from typeSize in Parse.Char('B').Once().Return(1)
-            .Or(
-                Parse.Char('W').Once().Return(2)
-            )
-            .Or(
-                Parse.Char('D').Once().Return(4)
-            )
-            .Or(
-                Parse.Char('Q').Once().Return(8)
-            )
-        from infix in Parse.WhiteSpace.AtLeastOnce()
-        from data in from buf in
-            (
-                from num in ImmediateParser
-                select NumToByteArray(typeSize, num)
-            ).Or(
-                from prefix in Parse.Chars("\"'").Once()
-                from str in Parse.CharExcept('"').Many().Text()
-                from postfix in Parse.Chars("\"'").Once()
-                select NumToByteArray(typeSize, str)
-            ).DelimitedBy(Parse.Char(',').Token()).Select(v => v.ToArray())
-            select buf.SelectMany(b => b).ToArray()
-        select data;
+    private static Parser<byte[]> DeclareParser(Dictionary<string, long> variables)
+    {
+        return from prefix in Parse.Char('D').Once()
+            from typeSize in Parse.Char('B').Once().Return(1)
+                .Or(
+                    Parse.Char('W').Once().Return(2)
+                )
+                .Or(
+                    Parse.Char('D').Once().Return(4)
+                )
+                .Or(
+                    Parse.Char('Q').Once().Return(8)
+                )
+            from infix in Parse.WhiteSpace.AtLeastOnce()
+            from data in from buf in
+                (
+                    from num in ImmediateParser(variables)
+                    select NumToByteArray(typeSize, num)
+                ).Or(
+                    from prefix in Parse.Chars("\"'").Once()
+                    from str in Parse.CharExcept('"').Many().Text()
+                    from postfix in Parse.Chars("\"'").Once()
+                    select NumToByteArray(typeSize, str)
+                ).DelimitedBy(Parse.Char(',').Token()).Select(v => v.ToArray())
+                select buf.SelectMany(b => b).ToArray()
+            select data;
+    }
 
-    private static readonly Parser<byte[]> ReserveParser =
-        from prefix in Parse.String("RES").Once()
-        from typeSize in Parse.Char('B').Once().Return(1)
-            .Or(
-                Parse.Char('W').Once().Return(2)
-            )
-            .Or(
-                Parse.Char('D').Once().Return(4)
-            )
-            .Or(
-                Parse.Char('Q').Once().Return(8)
-            )
-        from infix in Parse.WhiteSpace.AtLeastOnce()
-        from num in ImmediateParser
-        select Enumerable.Repeat((byte)0, (int)num * typeSize).ToArray();
+    private static Parser<byte[]> ReserveParser(Dictionary<string, long> variables)
+    {
+        return from prefix in Parse.String("RES").Once()
+            from typeSize in Parse.Char('B').Once().Return(1)
+                .Or(
+                    Parse.Char('W').Once().Return(2)
+                )
+                .Or(
+                    Parse.Char('D').Once().Return(4)
+                )
+                .Or(
+                    Parse.Char('Q').Once().Return(8)
+                )
+            from infix in Parse.WhiteSpace.AtLeastOnce()
+            from num in ImmediateParser(variables)
+            select Enumerable.Repeat((byte)0, (int)num * typeSize).ToArray();
+    }
 
-    private static readonly Parser<string> LabelParser =
-        from labelName in Parse.CharExcept(':').AtLeastOnce().Text()
-        from end in Parse.Char(':')
-        from trailing in Parse.WhiteSpace.Many()
-        select labelName;
-
-    private static readonly Dictionary<string, long> Labels = new();
+    private static Parser<string> LabelParser()
+    {
+        return from labelName in Parse.CharExcept(':').AtLeastOnce().Text()
+            from end in Parse.Char(':')
+            from trailing in Parse.WhiteSpace.Many()
+            select labelName;
+    }
 
     private static byte[] NumToByteArray(int typeSize, string str)
     {

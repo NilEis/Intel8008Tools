@@ -4,7 +4,7 @@ namespace Assembler;
 
 using System.CommandLine;
 
-class Assembler
+internal static class Assembler
 {
     static void Main(string[] args)
     {
@@ -21,12 +21,11 @@ class Assembler
             {
                 var mem = File.ReadAllBytes(input.FullName);
                 uint c = 0;
-                ushort p = (ushort)(start < 0 ? 0 : start >= mem.Length ? mem.Length - 1 : start);
-                short o;
+                var p = (ushort)(start < 0 ? 0 : start >= mem.Length ? mem.Length - 1 : start);
                 end = (end <= 0 || end > mem.Length) ? mem.Length : end;
                 while (p < end)
                 {
-                    Console.Out.WriteLine(Disassembler.Disassemble(p, mem, out o, ref c));
+                    Console.Out.WriteLine(Disassembler.Disassemble(p, mem, out var o, ref c));
                     p += (ushort)o;
                 }
             })
