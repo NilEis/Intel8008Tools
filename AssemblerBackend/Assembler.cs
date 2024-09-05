@@ -161,7 +161,7 @@ public partial class Assembler
                 // Decimal format: 1234
                 Parse.Digit.AtLeastOnce().Text().Select(digits => Convert.ToInt64(digits, 10)
                 )
-            );
+            ).Named("NumberParser");
     }
 
     private static Parser<ushort> ImmediateParser(Dictionary<string, long> variables)
@@ -171,16 +171,16 @@ public partial class Assembler
             from num in NumberParser()
             from postfix in Parse.Char(')').Once()
             select num
-        ).Or(VariableParser(variables)).Select(v => (ushort)v);
+        ).Or(VariableParser(variables)).Select(v => (ushort)v).Named("ImmediateParser");
     }
 
     private static Parser<long> VariableParser(Dictionary<string, long> variables)
     {
-        return from prefix in Parse.Char('@').Once()
+        return (from prefix in Parse.Char('@').Once()
             from variable in Parse.Upper.AtLeastOnce().Text()
             select variables.TryGetValue(variable, out var res)
                 ? res
-                : throw new ConstraintException($"Unknown variable {variable}");
+                : throw new ConstraintException($"Unknown variable {variable}")).Named("VariableParser");
     }
 
     private static Parser<long> AddrParser(Dictionary<string, long> labels)
@@ -193,18 +193,18 @@ public partial class Assembler
             }
 
             throw new ConstraintException($"unknown label: {s}");
-        }).Or(NumberParser()).Token();
+        }).Or(NumberParser()).Token().Named("AddressParser");
     }
 
     private static Parser<Reg> RegParser()
     {
         return Parse.Chars("BCDEHLMA").Token().Select(v =>
-            Enum.TryParse($"{v}", out Reg reg) ? reg : throw new ConstraintException("Invalid reg"));
+            Enum.TryParse($"{v}", out Reg reg) ? reg : throw new ConstraintException("Invalid reg")).Named("RegisterParser");
     }
 
     private static Parser<Rp> DRegParser()
     {
-        return from dreg in Parse.String("BC").Token().Text()
+        return (from dreg in Parse.String("BC").Token().Text()
                 .Or(Parse.String("B").Token().Text())
                 .Or(Parse.String("DE").Token().Text())
                 .Or(Parse.String("D").Token().Text())
@@ -212,7 +212,7 @@ public partial class Assembler
                 .Or(Parse.String("H").Token().Text())
                 .Or(Parse.String("SP").Token().Text())
                 .Or(Parse.String("PSW").Token().Return("SP"))
-            select Enum.TryParse($"{dreg}", out Rp reg) ? reg : throw new ConstraintException("Invalid dreg");
+            select Enum.TryParse($"{dreg}", out Rp reg) ? reg : throw new ConstraintException("Invalid dreg")).Named("DRegisterParser");
     }
 
     private Parser<(string cmd, string[] args)> AsmLineParser()
@@ -225,7 +225,7 @@ public partial class Assembler
 
     private static Parser<CompareCondition> CompareConditionParser()
     {
-        return from cc in Parse.String("NZ").Text()
+        return (from cc in Parse.String("NZ").Text()
                 .Or(Parse.String("Z").Text())
                 .Or(Parse.String("NC").Text())
                 .Or(Parse.String("C").Text())
@@ -235,12 +235,12 @@ public partial class Assembler
                 .Or(Parse.String("N").Text())
             select Enum.TryParse($"{cc}", out CompareCondition reg)
                 ? reg
-                : throw new ConstraintException("Invalid compare condition");
+                : throw new ConstraintException("Invalid compare condition")).Named("Compare ConditionParser");
     }
 
     private static Parser<Alu> AluParser()
     {
-        return from alu in Parse.String("ADD").Text()
+        return (from alu in Parse.String("ADD").Text()
                 .Or(Parse.String("ADD").Text())
                 .Or(Parse.String("ADC").Text())
                 .Or(Parse.String("SUB").Text())
@@ -259,7 +259,7 @@ public partial class Assembler
                 .Or(Parse.String("CPI").Text())
             select Enum.TryParse($"{alu}", out Alu aluOp)
                 ? aluOp
-                : throw new ConstraintException("Invalid ALU operation");
+                : throw new ConstraintException("Invalid ALU operation")).Named("AluParser");
     }
 
     private static Parser<int> MnemonicSizeParser()
