@@ -176,9 +176,8 @@ public partial class Assembler
 
     private static Parser<long> VariableParser(Dictionary<string, long> variables)
     {
-        return from prefix in Parse.Char('(').Once()
+        return from prefix in Parse.Char('@').Once()
             from variable in Parse.Upper.AtLeastOnce().Text()
-            from postfix in Parse.Char(')').Once()
             select variables.TryGetValue(variable, out var res)
                 ? res
                 : throw new ConstraintException($"Unknown variable {variable}");

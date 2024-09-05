@@ -14,7 +14,7 @@ const string input = """
                      ; Return registers
                      ;       BC - Zero
                      
-                                 org     (1000h)       ;Origin at 1000h
+                                 org     1000h       ;Origin at 1000h
                      memcpy:
                                  mov     a,b         ;Copy register B to register A
                                  ora     c           ;Bitwise OR of A and C into register A
