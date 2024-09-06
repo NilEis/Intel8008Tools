@@ -11,14 +11,13 @@ public partial class Assembler
     public static bool Assemble(string code, [NotNullWhen(true)] out byte[]? buf)
     {
         var memoryBuffer = new MemoryBuffer<byte>();
-        var codeWithoutComments = CommentRegEx().Replace(code, "");
+        var codeWithoutComments = CommentRegEx().Replace(code, "").Replace("'", "\"").Replace("\t", "   ");
         var lines = codeWithoutComments.ToUpper().Split('\n', StringSplitOptions.TrimEntries)
             .Select((l, i) => (line: l, index: i)).Where(v => v.line.Trim().Length != 0).ToArray();
         var addr = 0L;
         var lineToAddr = new Queue<long>();
 
         Dictionary<string, long> labels = new();
-        Dictionary<string, long> variables = new();
 
         foreach (var line in lines)
         {
@@ -32,14 +31,14 @@ public partial class Assembler
 
             try
             {
-                var org = OrgParser(variables).TryParse(currentText);
+                var org = OrgParser(labels, labels).TryParse(currentText);
                 if (org.WasSuccessful)
                 {
                     addr = org.Value;
                     continue;
                 }
 
-                var dec = DeclareParser(variables).TryParse(currentText);
+                var dec = DeclareParser(labels, labels).TryParse(currentText);
                 if (dec.WasSuccessful)
                 {
                     lineToAddr.Enqueue(addr);
@@ -47,12 +46,21 @@ public partial class Assembler
                     continue;
                 }
 
-                var res = ReserveParser(variables).TryParse(currentText);
+                var res = ReserveParser(labels, labels).TryParse(currentText);
                 if (res.WasSuccessful)
                 {
                     lineToAddr.Enqueue(addr);
                     addr += res.Value.Length;
                     continue;
+                }
+
+                var variable = VariableDeclarationParser(labels, labels).TryParse(currentText);
+                if (variable.WasSuccessful)
+                {
+                    if (!labels.TryAdd(variable.Value.Item1, variable.Value.Item2))
+                    {
+                        throw new ConstraintException($"Could not add variable {variable.Value.Item1}");
+                    }
                 }
 
                 var size = MnemonicSizeParser().TryParse(currentText);
@@ -85,13 +93,13 @@ public partial class Assembler
 
             try
             {
-                var org = OrgParser(variables).TryParse(currentText);
+                var org = OrgParser(labels, labels).TryParse(currentText);
                 if (org.WasSuccessful)
                 {
                     continue;
                 }
 
-                var dec = DeclareParser(variables).TryParse(currentText);
+                var dec = DeclareParser(labels, labels).TryParse(currentText);
                 if (dec.WasSuccessful)
                 {
                     addr = lineToAddr.Dequeue();
@@ -99,7 +107,7 @@ public partial class Assembler
                     continue;
                 }
 
-                var res = ReserveParser(variables).TryParse(currentText);
+                var res = ReserveParser(labels, labels).TryParse(currentText);
                 if (res.WasSuccessful)
                 {
                     addr = lineToAddr.Dequeue();
@@ -108,7 +116,18 @@ public partial class Assembler
                     continue;
                 }
 
-                var mnem = MnemonicParser(labels, variables).TryParse(currentText);
+                var variable = VariableDeclarationParser(labels, labels).TryParse(currentText);
+                if (variable.WasSuccessful)
+                {
+                    continue;
+                }
+
+                if (Parse.String("END").Token().TryParse(currentText).WasSuccessful)
+                {
+                    break;
+                }
+
+                var mnem = MnemonicParser(labels, labels).TryParse(currentText);
                 if (mnem.WasSuccessful)
                 {
                     addr = lineToAddr.Dequeue();
@@ -127,98 +146,49 @@ public partial class Assembler
         return true;
     }
 
-    private static Parser<long> NumberParser()
+    private static Parser<ushort> ImmediateParser(Dictionary<string, long> variables, Dictionary<string, long> labels)
     {
-        return (
-                // Hexadecimal format: 1234h
-                from digits in Parse.Chars("0123456789ABCDEF").AtLeastOnce().Text()
-                from suffix in Parse.Char('H')
-                select Convert.ToInt64(digits, 16)
-            )
-            .Or
-            (
-                // Hexadecimal format: 0x1234
-                from prefix in Parse.String("0X")
-                from digits in Parse.Chars("0123456789ABCDEF").AtLeastOnce().Text()
-                select Convert.ToInt64(digits, 16)
-            )
-            .Or
-            (
-                // Binary format: 1010b
-                from digits in Parse.Chars("01").AtLeastOnce().Text()
-                from suffix in Parse.Char('B')
-                select Convert.ToInt64(digits, 2)
-            )
-            .Or
-            (
-                // Binary format: 0b1010
-                from prefix in Parse.String("0B")
-                from digits in Parse.Chars("01").AtLeastOnce().Text()
-                select Convert.ToInt64(digits, 2)
-            )
-            .Or
-            (
-                // Decimal format: 1234
-                Parse.Digit.AtLeastOnce().Text().Select(digits => Convert.ToInt64(digits, 10)
-                )
-            ).Named("NumberParser");
+        return
+            ExpressionParser.NumberParser().Or(ExpressionParser.ParseExpression(variables, labels)
+                .Select(v => v.Compile().Invoke())
+                .Or(ExpressionParser.VariableParser(variables))).Select(v => (ushort)v).Named("ImmediateParser");
     }
 
-    private static Parser<ushort> ImmediateParser(Dictionary<string, long> variables)
+    private static Parser<(string, ushort)> VariableDeclarationParser(Dictionary<string, long> variables,
+        Dictionary<string, long> labels)
     {
-        return NumberParser().Or(
-            from prefix in Parse.Char('(').Once()
-            from num in NumberParser()
-            from postfix in Parse.Char(')').Once()
-            select num
-        ).Or(VariableParser(variables)).Select(v => (ushort)v).Named("ImmediateParser");
-    }
-
-    private static Parser<long> VariableParser(Dictionary<string, long> variables)
-    {
-        return (from prefix in Parse.Char('@').Once()
-            from variable in Parse.Upper.AtLeastOnce().Text()
-            select variables.TryGetValue(variable, out var res)
-                ? res
-                : throw new ConstraintException($"Unknown variable {variable}")).Named("VariableParser");
-    }
-
-    private static Parser<long> AddrParser(Dictionary<string, long> labels)
-    {
-        return Parse.Upper.AtLeastOnce().Text().Select(s =>
-        {
-            if (labels.TryGetValue(s, out var addr))
-            {
-                return addr;
-            }
-
-            throw new ConstraintException($"unknown label: {s}");
-        }).Or(NumberParser()).Token().Named("AddressParser");
+        return
+            from name in ExpressionParser.NameParser().Token()
+            from infix in Parse.String("EQU").Token()
+            from value in ImmediateParser(variables, labels).Token()
+            select (name, value);
     }
 
     private static Parser<Reg> RegParser()
     {
         return Parse.Chars("BCDEHLMA").Token().Select(v =>
-            Enum.TryParse($"{v}", out Reg reg) ? reg : throw new ConstraintException("Invalid reg")).Named("RegisterParser");
+                Enum.TryParse($"{v}", out Reg reg) ? reg : throw new ConstraintException("Invalid reg"))
+            .Named("RegisterParser");
     }
 
     private static Parser<Rp> DRegParser()
     {
         return (from dreg in Parse.String("BC").Token().Text()
-                .Or(Parse.String("B").Token().Text())
-                .Or(Parse.String("DE").Token().Text())
-                .Or(Parse.String("D").Token().Text())
-                .Or(Parse.String("HL").Token().Text())
-                .Or(Parse.String("H").Token().Text())
-                .Or(Parse.String("SP").Token().Text())
-                .Or(Parse.String("PSW").Token().Return("SP"))
-            select Enum.TryParse($"{dreg}", out Rp reg) ? reg : throw new ConstraintException("Invalid dreg")).Named("DRegisterParser");
+                    .Or(Parse.String("B").Token().Text())
+                    .Or(Parse.String("DE").Token().Text())
+                    .Or(Parse.String("D").Token().Text())
+                    .Or(Parse.String("HL").Token().Text())
+                    .Or(Parse.String("H").Token().Text())
+                    .Or(Parse.String("SP").Token().Text())
+                    .Or(Parse.String("PSW").Token().Return("SP"))
+                select Enum.TryParse($"{dreg}", out Rp reg) ? reg : throw new ConstraintException("Invalid dreg"))
+            .Named("DRegisterParser");
     }
 
     private Parser<(string cmd, string[] args)> AsmLineParser()
     {
         return from cmd in Parse.Upper.Repeat(2, 4).Token().Text()
-            from args in NumberParser().Select(v => $"{v}").Or(Parse.Upper.AtLeastOnce().Text())
+            from args in ExpressionParser.NumberParser().Select(v => $"{v}").Or(Parse.Upper.AtLeastOnce().Text())
                 .DelimitedBy(Parse.Char(',').Token()).Repeat(0, 1).Select(v => v)
             select (cmd, args: args.SelectMany(v => v).ToArray());
     }
@@ -232,7 +202,7 @@ public partial class Assembler
                 .Or(Parse.String("PO").Text())
                 .Or(Parse.String("PE").Text())
                 .Or(Parse.String("P").Text())
-                .Or(Parse.String("N").Text())
+                .Or(Parse.String("N").Or(Parse.String("M").Return("N")).Text())
             select Enum.TryParse($"{cc}", out CompareCondition reg)
                 ? reg
                 : throw new ConstraintException("Invalid compare condition")).Named("Compare ConditionParser");
@@ -304,6 +274,7 @@ public partial class Assembler
                 ).Token().Return(1)
             )
             .Or(Parse.String("POP").Token().Return(1))
+            .Or(Parse.String("JMP").Token().Return(3))
             .Or(
                 (
                     from s in Parse.String("J")
@@ -311,7 +282,6 @@ public partial class Assembler
                     select cc
                 ).Token().Return(3)
             )
-            .Or(Parse.String("JMP").Token().Return(3))
             .Or(
                 (
                     from s in Parse.String("C")
@@ -364,7 +334,7 @@ public partial class Assembler
                 from cmd in Parse.String("LXI").Token().Return((byte)0b00000001)
                 from rp in DRegParser()
                 from infix in Parse.Char(',').Token()
-                from num in ImmediateParser(variables)
+                from num in ImmediateParser(variables, labels)
                 select (byte[])
                 [
                     (byte)(cmd | (byte)((byte)rp << 5)),
@@ -396,7 +366,7 @@ public partial class Assembler
                 from cmd in Parse.String("MVI").Token().Return((byte)0b00000110)
                 from reg in RegParser()
                 from infix in Parse.Char(',').Token()
-                from num in ImmediateParser(variables)
+                from num in ImmediateParser(variables, labels)
                 select (byte[]) [(byte)(cmd | (byte)((byte)reg << 3)), (byte)num]
             )
             .Or(
@@ -416,22 +386,22 @@ public partial class Assembler
             )
             .Or(
                 from cmd in Parse.String("SHLD").Token().Return((byte)0b00100010)
-                from num in NumberParser()
+                from num in ExpressionParser.NumberParser()
                 select (byte[]) [cmd, (byte)num, (byte)(num >> 8)]
             )
             .Or(
                 from cmd in Parse.String("LHLD").Token().Return((byte)0b00101010)
-                from num in NumberParser()
+                from num in ExpressionParser.NumberParser()
                 select (byte[]) [cmd, (byte)num, (byte)(num >> 8)]
             )
             .Or(
                 from cmd in Parse.String("STA").Token().Return((byte)0b00110010)
-                from num in NumberParser()
+                from num in ExpressionParser.NumberParser()
                 select (byte[]) [cmd, (byte)num, (byte)(num >> 8)]
             )
             .Or(
                 from cmd in Parse.String("LDA").Token().Return((byte)0b00111010)
-                from num in NumberParser()
+                from num in ExpressionParser.NumberParser()
                 select (byte[]) [cmd, (byte)num, (byte)(num >> 8)]
             )
             .Or(
@@ -457,20 +427,20 @@ public partial class Assembler
                 select (byte[]) [(byte)(cmd | (byte)((byte)rp << 4))]
             )
             .Or(
-                from j in Parse.Char('J').Return((byte)0b11000010)
-                from op in CompareConditionParser()
-                from addr in AddrParser(labels).Token()
-                select (byte[]) [(byte)(j | (byte)((byte)op << 3)), (byte)addr, (byte)(addr >> 8)]
+                from j in Parse.String("JMP").Return((byte)0b11000011)
+                from addr in ExpressionParser.AddrParser(labels).Token()
+                select (byte[]) [j, (byte)addr, (byte)(addr >> 8)]
             )
             .Or(
-                from j in Parse.String("JMP").Return((byte)0b11000011)
-                from addr in AddrParser(labels).Token()
-                select (byte[]) [j, (byte)addr, (byte)(addr >> 8)]
+                from j in Parse.Char('J').Return((byte)0b11000010)
+                from op in CompareConditionParser()
+                from addr in ExpressionParser.AddrParser(labels).Token()
+                select (byte[]) [(byte)(j | (byte)((byte)op << 3)), (byte)addr, (byte)(addr >> 8)]
             )
             .Or(
                 from c in Parse.Char('C').Return((byte)0b11000100)
                 from op in CompareConditionParser()
-                from addr in AddrParser(labels).Token()
+                from addr in ExpressionParser.AddrParser(labels).Token()
                 select (byte[]) [(byte)(c | (byte)((byte)op << 3)), (byte)addr, (byte)(addr >> 8)]
             )
             .Or(
@@ -480,12 +450,12 @@ public partial class Assembler
             )
             .Or(
                 from cmd in AluParser().Token().Select(v => (byte)(0b11000110 | (byte)((byte)v << 3)))
-                from num in ImmediateParser(variables).Select(v => (byte)v)
+                from num in ImmediateParser(variables, labels).Select(v => (byte)v)
                 select (byte[]) [cmd, num]
             )
             .Or(
                 from cmd in Parse.String("RST").Return((byte)0b11000111)
-                from i in AddrParser(labels).Select(v =>
+                from i in ExpressionParser.AddrParser(labels).Select(v =>
                     v <= 0b111
                         ? v
                         : throw new ConstraintException($"RST can only call addresses smaller than {0b1000}"))
@@ -493,33 +463,33 @@ public partial class Assembler
             )
             .Or(
                 from cmd in Parse.String("CALL").Return((byte)0b11001101)
-                from addr in AddrParser(labels).Token()
+                from addr in ExpressionParser.AddrParser(labels).Token()
                 select (byte[]) [cmd, (byte)addr, (byte)(addr >> 8)]
             )
             .Or(
                 from cmd in Parse.String("OUT").Return((byte)0b11010011)
-                from addr in ImmediateParser(variables)
+                from addr in ImmediateParser(variables, labels)
                 select (byte[]) [cmd, (byte)addr, (byte)(addr >> 8)]
             )
             .Or(
                 from cmd in Parse.String("IN").Return((byte)0b11011011)
-                from addr in ImmediateParser(variables)
+                from addr in ImmediateParser(variables, labels)
                 select (byte[]) [cmd, (byte)addr, (byte)(addr >> 8)]
             )
             .Or(Parse.AnyChar.Many().Select(v =>
                 false ? (byte[]) [1] : throw new ConstraintException($"Invalid operation: {string.Join("", v)}")));
     }
 
-    private static Parser<long> OrgParser(Dictionary<string, long> variables)
+    private static Parser<long> OrgParser(Dictionary<string, long> variables, Dictionary<string, long> labels)
     {
         return from org in Parse.String("ORG").Once()
             from whiteSpace in Parse.WhiteSpace.Many()
-            from num in ImmediateParser(variables)
+            from num in ImmediateParser(variables, labels)
             from whiteSpaceEnd in Parse.WhiteSpace.Many()
             select (long)num;
     }
 
-    private static Parser<byte[]> DeclareParser(Dictionary<string, long> variables)
+    private static Parser<byte[]> DeclareParser(Dictionary<string, long> variables, Dictionary<string, long> labels)
     {
         return from prefix in Parse.Char('D').Once()
             from typeSize in Parse.Char('B').Once().Return(1)
@@ -531,23 +501,22 @@ public partial class Assembler
                 )
                 .Or(
                     Parse.Char('Q').Once().Return(8)
-                )
-            from infix in Parse.WhiteSpace.AtLeastOnce()
+                ).Token()
             from data in from buf in
                 (
-                    from num in ImmediateParser(variables)
+                    from num in ImmediateParser(variables, labels)
                     select NumToByteArray(typeSize, num)
                 ).Or(
-                    from prefix in Parse.Chars("\"'").Once()
+                    from prefix in Parse.Chars("\"").Once()
                     from str in Parse.CharExcept('"').Many().Text()
-                    from postfix in Parse.Chars("\"'").Once()
+                    from postfix in Parse.Chars("\"").Once()
                     select NumToByteArray(typeSize, str)
                 ).DelimitedBy(Parse.Char(',').Token()).Select(v => v.ToArray())
                 select buf.SelectMany(b => b).ToArray()
             select data;
     }
 
-    private static Parser<byte[]> ReserveParser(Dictionary<string, long> variables)
+    private static Parser<byte[]> ReserveParser(Dictionary<string, long> variables, Dictionary<string, long> labels)
     {
         return from prefix in Parse.String("RES").Once()
             from typeSize in Parse.Char('B').Once().Return(1)
@@ -561,7 +530,7 @@ public partial class Assembler
                     Parse.Char('Q').Once().Return(8)
                 )
             from infix in Parse.WhiteSpace.AtLeastOnce()
-            from num in ImmediateParser(variables)
+            from num in ImmediateParser(variables, labels)
             select Enumerable.Repeat((byte)0, (int)num * typeSize).ToArray();
     }
 

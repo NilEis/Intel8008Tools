@@ -36,10 +36,11 @@ const string input = """
 
                      """;
 
+
 if (Assembler.Assemble(input, out var b))
 {
     uint c = 0;
-    ushort p = 0x1000;
+    ushort p = 0;
     short o = 0;
     while (p < b.Length)
     {
