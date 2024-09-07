@@ -40,7 +40,7 @@ Debug.Assert(DownloadUtil.GetFileStringCached(true, "cpudiag.asm", "http://www.e
     out var str));
 
 
-if (Assembler.Assemble(str, out var b))
+if (Assembler.Assemble(input, out var b))
 {
     uint c = 0;
     ushort p = 0;

@@ -35,6 +35,8 @@ public class MemoryBuffer<T>
         }
     }
 
+    public void Add(T v) => _internalBuffer.Add(v);
+
     public T[] ToArray()
     {
         return _internalBuffer.ToArray();

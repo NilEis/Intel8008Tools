@@ -1,5 +1,6 @@
 ﻿using System.Data;
 using System.Diagnostics.CodeAnalysis;
+using System.Text;
 using System.Text.RegularExpressions;
 using Sprache;
 
@@ -7,6 +8,7 @@ namespace AssemblerBackend;
 
 public partial class Assembler
 {
+
     public static bool Assemble(string code, [NotNullWhen(true)] out byte[]? buf)
     {
         var memoryBuffer = new MemoryBuffer<byte>();
@@ -17,6 +19,7 @@ public partial class Assembler
         var lineToAddr = new Queue<long>();
 
         Dictionary<string, long> labels = new();
+        var debugInfo = new Dictionary<long, DebugInfo>();
 
         foreach (var line in lines)
         {
@@ -24,8 +27,18 @@ public partial class Assembler
             var label = LabelParser().TryParse(currentText);
             if (label.WasSuccessful)
             {
+                if (!debugInfo.TryAdd(addr, DebugInfo.CreateInstance(label.Value, addr, 0)))
+                {
+                    debugInfo[addr].Label =
+                        debugInfo[addr].Label.Length < label.Value.Length ? label.Value : debugInfo[addr].Label;
+                }
+
                 labels.Add(label.Value, addr);
                 currentText = currentText.Replace(label.Value + ":", "").Trim();
+                if (currentText.Length == 0)
+                {
+                    continue;
+                }
             }
 
             try
@@ -40,6 +53,11 @@ public partial class Assembler
                 var dec = DeclareParser(labels, labels).TryParse(currentText);
                 if (dec.WasSuccessful)
                 {
+                    if (!debugInfo.TryAdd(addr, DebugInfo.CreateInstance("", addr, dec.Value.Length)))
+                    {
+                        debugInfo[addr].Length = dec.Value.Length;
+                    }
+
                     lineToAddr.Enqueue(addr);
                     addr += dec.Value.Length;
                     continue;
@@ -48,6 +66,11 @@ public partial class Assembler
                 var res = ReserveParser(labels, labels).TryParse(currentText);
                 if (res.WasSuccessful)
                 {
+                    if (!debugInfo.TryAdd(addr, DebugInfo.CreateInstance("", addr, res.Value.Length)))
+                    {
+                        debugInfo[addr].Length = res.Value.Length;
+                    }
+
                     lineToAddr.Enqueue(addr);
                     addr += res.Value.Length;
                     continue;
@@ -60,6 +83,7 @@ public partial class Assembler
                     {
                         throw new ConstraintException($"Could not add variable {variable.Value.Item1}");
                     }
+
                     continue;
                 }
 
@@ -140,6 +164,17 @@ public partial class Assembler
                 buf = memoryBuffer.ToArray();
                 return false;
             }
+        }
+
+        memoryBuffer.AddRange(MnemonicParser(labels, labels).Parse("HLT"));
+        memoryBuffer.AddRange((byte[]) [0xDE, 0xAD, 0xCA, 0xFF, 0xEE]);
+        foreach (var a in debugInfo.Keys)
+        {
+            var labelAsBytes = Encoding.UTF8.GetBytes(debugInfo[a].Label);
+            memoryBuffer.AddRange((byte[]) [(byte)(debugInfo[a].Address >> 8), (byte)debugInfo[a].Address]);
+            memoryBuffer.AddRange((byte[]) [(byte)(labelAsBytes.Length >> 8), (byte)labelAsBytes.Length]);
+            memoryBuffer.AddRange(labelAsBytes);
+            memoryBuffer.AddRange((byte[]) [(byte)(debugInfo[a].Length >> 8), (byte)debugInfo[a].Length]);
         }
 
         buf = memoryBuffer.ToArray();
@@ -509,9 +544,8 @@ public partial class Assembler
                     from num in ImmediateParser(variables, labels)
                     select NumToByteArray(typeSize, num)
                 ).Or(
-                    from prefix in Parse.Chars("\"").Once()
-                    from str in Parse.CharExcept('"').Many().Text()
-                    from postfix in Parse.Chars("\"").Once()
+                    from str in Parse.CharExcept('"').Many()
+                        .Contained(Parse.Chars("\"").Once(), Parse.Chars("\"").Once()).Text()
                     select NumToByteArray(typeSize, str)
                 ).DelimitedBy(Parse.Char(',').Token()).Select(v => v.ToArray())
                 select buf.SelectMany(b => b).ToArray()
