@@ -14,17 +14,24 @@ internal static class ExpressionParser
         return Lambda(variables, labels);
     }
 
-    private static Parser<ExpressionType> Operator(string op, ExpressionType opType)
+    private static Parser<ExpressionType> Operator(ExpressionType opType, params string[] op)
     {
-        return Parse.String(op).Token().Return(opType);
+        var res = Parse.String(op[0]);
+        for (var i = 1; i < op.Length; i++)
+        {
+            res = res.Or(Parse.String(op[i]));
+        }
+
+        return res.Token().Return(opType);
     }
 
-    private static readonly Parser<ExpressionType> Add = Operator("+", ExpressionType.AddChecked);
-    private static readonly Parser<ExpressionType> Subtract = Operator("-", ExpressionType.SubtractChecked);
-    private static readonly Parser<ExpressionType> Multiply = Operator("*", ExpressionType.MultiplyChecked);
-    private static readonly Parser<ExpressionType> Divide = Operator("/", ExpressionType.Divide);
-    private static readonly Parser<ExpressionType> Modulo = Operator("%", ExpressionType.Modulo);
-    private static readonly Parser<ExpressionType> Power = Operator("^", ExpressionType.Power);
+    private static readonly Parser<ExpressionType> Add = Operator(ExpressionType.AddChecked, "+");
+    private static readonly Parser<ExpressionType> Subtract = Operator(ExpressionType.SubtractChecked, "-");
+    private static readonly Parser<ExpressionType> Multiply = Operator(ExpressionType.MultiplyChecked, "*");
+    private static readonly Parser<ExpressionType> Divide = Operator(ExpressionType.Divide, "/");
+    private static readonly Parser<ExpressionType> Modulo = Operator(ExpressionType.Modulo, "%");
+    private static readonly Parser<ExpressionType> Power = Operator(ExpressionType.Power, "^");
+    private static readonly Parser<ExpressionType> And = Operator(ExpressionType.And, "&", "AND");
 
     private static Parser<Expression> Function(Dictionary<string, long> variables, Dictionary<string, long> labels)
     {
@@ -49,7 +56,8 @@ internal static class ExpressionParser
 
     private static Parser<Expression> Constant(Dictionary<string, long> variables, Dictionary<string, long> labels)
     {
-        return NumberParser().Or(AddrParser(labels)).Or(VariableParser(variables)).Select(v => Expression.Constant(v))
+        return Parser.NumberParser().Or(Parser.AddrParser(labels)).Or(Parser.VariableParser(variables))
+            .Select(v => Expression.Constant(v))
             .Named("number");
     }
 
@@ -79,7 +87,7 @@ internal static class ExpressionParser
 
     private static Parser<Expression> Term(Dictionary<string, long> variables, Dictionary<string, long> labels)
     {
-        return Parse.ChainOperator(Multiply.Or(Divide).Or(Modulo), InnerTerm(variables, labels), Expression.MakeBinary);
+        return Parse.ChainOperator(Multiply.Or(Divide).Or(Modulo).Or(And), InnerTerm(variables, labels), Expression.MakeBinary);
     }
 
     private static Parser<Expression> Expr(Dictionary<string, long> variables, Dictionary<string, long> labels)
@@ -91,60 +99,5 @@ internal static class ExpressionParser
         Dictionary<string, long> labels)
     {
         return Expr(variables, labels).End().Select(body => Expression.Lambda<Func<long>>(body));
-    }
-
-    public static Parser<long> NumberParser()
-    {
-        return (
-                // Hexadecimal format: 1234h
-                from digits in Parse.Chars("0123456789ABCDEF").AtLeastOnce().Text()
-                from suffix in Parse.Char('H')
-                select Convert.ToInt64(digits, 16)
-            )
-            .Or
-            (
-                // Hexadecimal format: 0x1234
-                from prefix in Parse.String("0X")
-                from digits in Parse.Chars("0123456789ABCDEF").AtLeastOnce().Text()
-                select Convert.ToInt64(digits, 16)
-            )
-            .Or
-            (
-                // Binary format: 1010b
-                from digits in Parse.Chars("01").AtLeastOnce().Text()
-                from suffix in Parse.Char('B')
-                select Convert.ToInt64(digits, 2)
-            )
-            .Or
-            (
-                // Binary format: 0b1010
-                from prefix in Parse.String("0B")
-                from digits in Parse.Chars("01").AtLeastOnce().Text()
-                select Convert.ToInt64(digits, 2)
-            )
-            .Or
-            (
-                // Decimal format: 1234
-                Parse.Digit.AtLeastOnce().Text().Select(digits => Convert.ToInt64(digits, 10)
-                )
-            ).Named("NumberParser");
-    }
-
-    public static Parser<long> VariableParser(Dictionary<string, long> variables)
-    {
-        return from variable in NameParser().Where(v => variables.TryGetValue(v, out _))
-            select variables[variable];
-    }
-
-    public static Parser<long> AddrParser(Dictionary<string, long> labels)
-    {
-        return NameParser().Where(v => labels.TryGetValue(v, out _)).Select(s =>
-                labels[s]).Or(ExpressionParser.NumberParser()).Token()
-            .Named("AddressParser");
-    }
-
-    public static Parser<string> NameParser()
-    {
-        return Parse.Identifier(Parse.Upper, Parse.Upper.Or(Parse.Numeric)).Text();
     }
 }

@@ -2,6 +2,7 @@
 
 using System.Data;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Text;
 using AssemblerBackend;
@@ -1236,58 +1237,33 @@ public class Intel8080
     public static void RunTestSuite(bool cacheFile = false, bool print_debug = false)
     {
         byte[] f;
-        var desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-        var filePath = Path.Combine(desktopPath, "cpudiag.bin");
-        if (File.Exists(filePath))
+        if (DownloadUtil.GetFileBytesCached(cacheFile, "cpudiag.bin", "http://www.emulator101.com/files/cpudiag.bin", out f))
         {
-            Console.Out.WriteLine("Using cached cpudiag.bin");
-            f = File.ReadAllBytes(filePath);
-        }
-        else
-        {
-            Console.Out.WriteLine("Downloading cpudiag.bin");
-            using var client = new HttpClient();
-            try
+            var testCpu = new Intel8080().LoadMemory(f, 0x100)
+                .LoadMemory([0xc3, 0x00, 0x01], 0)
+                .LoadMemory([0x07], 368);
+            do
             {
-                f = client.GetByteArrayAsync("http://www.emulator101.com/files/cpudiag.bin").Result;
-
-                // Optionally cache the file on the desktop
-                if (cacheFile)
+                /* on error:
+                 * 0x00C5: CALL 0x689
+                 * 0x0589: LXI HL, 0x018B
+                 * 0x058C: CALL 0x145
+                 * 0x0045: PUSH DE
+                 * 0x0046: XCHG
+                 * 0x0047: MVI C, 0x09
+                 * 0x0049: CALL 0x5
+                 */
+                if (testCpu.PC != 0x689)
                 {
-                    File.WriteAllBytes(filePath, f);
+                    continue;
                 }
-            }
-            catch (HttpRequestException e)
-            {
-                Console.WriteLine("Error downloading file: " + e.Message);
-                return;
-            }
+
+                Console.Out.WriteLine("ERROR IN PREV INSTR");
+                while (true)
+                {
+                }
+            } while (testCpu.run(true, false, print_debug).Item1);
         }
-
-        var testCpu = new Intel8080().LoadMemory(f, 0x100)
-            .LoadMemory([0xc3, 0x00, 0x01], 0)
-            .LoadMemory([0x07], 368);
-        do
-        {
-            /* on error:
-             * 0x00C5: CALL 0x689
-             * 0x0589: LXI HL, 0x018B
-             * 0x058C: CALL 0x145
-             * 0x0045: PUSH DE
-             * 0x0046: XCHG
-             * 0x0047: MVI C, 0x09
-             * 0x0049: CALL 0x5
-             */
-            if (testCpu.PC != 0x689)
-            {
-                continue;
-            }
-
-            Console.Out.WriteLine("ERROR IN PREV INSTR");
-            while (true)
-            {
-            }
-        } while (testCpu.run(true, false, print_debug).Item1);
     }
 
     public string GetCurrentInstrAsString()

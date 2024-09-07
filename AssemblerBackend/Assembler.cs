@@ -1,5 +1,4 @@
 ﻿using System.Data;
-using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
 using Sprache;
@@ -61,6 +60,7 @@ public partial class Assembler
                     {
                         throw new ConstraintException($"Could not add variable {variable.Value.Item1}");
                     }
+                    continue;
                 }
 
                 var size = MnemonicSizeParser().TryParse(currentText);
@@ -149,16 +149,16 @@ public partial class Assembler
     private static Parser<ushort> ImmediateParser(Dictionary<string, long> variables, Dictionary<string, long> labels)
     {
         return
-            ExpressionParser.NumberParser().Or(ExpressionParser.ParseExpression(variables, labels)
+            Parser.NumberParser().Or(ExpressionParser.ParseExpression(variables, labels)
                 .Select(v => v.Compile().Invoke())
-                .Or(ExpressionParser.VariableParser(variables))).Select(v => (ushort)v).Named("ImmediateParser");
+                .Or(Parser.VariableParser(variables))).Select(v => (ushort)v).Named("ImmediateParser");
     }
 
     private static Parser<(string, ushort)> VariableDeclarationParser(Dictionary<string, long> variables,
         Dictionary<string, long> labels)
     {
         return
-            from name in ExpressionParser.NameParser().Token()
+            from name in Parser.NameParser().Token()
             from infix in Parse.String("EQU").Token()
             from value in ImmediateParser(variables, labels).Token()
             select (name, value);
@@ -188,7 +188,7 @@ public partial class Assembler
     private Parser<(string cmd, string[] args)> AsmLineParser()
     {
         return from cmd in Parse.Upper.Repeat(2, 4).Token().Text()
-            from args in ExpressionParser.NumberParser().Select(v => $"{v}").Or(Parse.Upper.AtLeastOnce().Text())
+            from args in Parser.NumberParser().Select(v => $"{v}").Or(Parse.Upper.AtLeastOnce().Text())
                 .DelimitedBy(Parse.Char(',').Token()).Repeat(0, 1).Select(v => v)
             select (cmd, args: args.SelectMany(v => v).ToArray());
     }
@@ -308,7 +308,9 @@ public partial class Assembler
             .Or(Parse.String("XCHG").Token().Return(1))
             .Or(Parse.String("DI").Token().Return(1))
             .Or(Parse.String("SPHL").Token().Return(1))
-            .Or(Parse.String("EI").Token().Return(1));
+            .Or(Parse.String("EI").Token().Return(1))
+            .Or(Parse.AnyChar.Many().Select(v =>
+                false ? 1 : throw new ConstraintException($"Invalid operation: {string.Join("", v)}")));
     }
 
     private static Parser<byte[]> MnemonicParser(Dictionary<string, long> labels, Dictionary<string, long> variables)
@@ -386,22 +388,22 @@ public partial class Assembler
             )
             .Or(
                 from cmd in Parse.String("SHLD").Token().Return((byte)0b00100010)
-                from num in ExpressionParser.NumberParser()
+                from num in ImmediateParser(variables, labels)
                 select (byte[]) [cmd, (byte)num, (byte)(num >> 8)]
             )
             .Or(
                 from cmd in Parse.String("LHLD").Token().Return((byte)0b00101010)
-                from num in ExpressionParser.NumberParser()
+                from num in ImmediateParser(variables, labels)
                 select (byte[]) [cmd, (byte)num, (byte)(num >> 8)]
             )
             .Or(
                 from cmd in Parse.String("STA").Token().Return((byte)0b00110010)
-                from num in ExpressionParser.NumberParser()
+                from num in ImmediateParser(variables, labels)
                 select (byte[]) [cmd, (byte)num, (byte)(num >> 8)]
             )
             .Or(
                 from cmd in Parse.String("LDA").Token().Return((byte)0b00111010)
-                from num in ExpressionParser.NumberParser()
+                from num in ImmediateParser(variables, labels)
                 select (byte[]) [cmd, (byte)num, (byte)(num >> 8)]
             )
             .Or(
@@ -428,19 +430,19 @@ public partial class Assembler
             )
             .Or(
                 from j in Parse.String("JMP").Return((byte)0b11000011)
-                from addr in ExpressionParser.AddrParser(labels).Token()
+                from addr in Parser.AddrParser(labels).Token()
                 select (byte[]) [j, (byte)addr, (byte)(addr >> 8)]
             )
             .Or(
                 from j in Parse.Char('J').Return((byte)0b11000010)
                 from op in CompareConditionParser()
-                from addr in ExpressionParser.AddrParser(labels).Token()
+                from addr in Parser.AddrParser(labels).Token()
                 select (byte[]) [(byte)(j | (byte)((byte)op << 3)), (byte)addr, (byte)(addr >> 8)]
             )
             .Or(
                 from c in Parse.Char('C').Return((byte)0b11000100)
                 from op in CompareConditionParser()
-                from addr in ExpressionParser.AddrParser(labels).Token()
+                from addr in Parser.AddrParser(labels).Token()
                 select (byte[]) [(byte)(c | (byte)((byte)op << 3)), (byte)addr, (byte)(addr >> 8)]
             )
             .Or(
@@ -455,7 +457,7 @@ public partial class Assembler
             )
             .Or(
                 from cmd in Parse.String("RST").Return((byte)0b11000111)
-                from i in ExpressionParser.AddrParser(labels).Select(v =>
+                from i in Parser.AddrParser(labels).Select(v =>
                     v <= 0b111
                         ? v
                         : throw new ConstraintException($"RST can only call addresses smaller than {0b1000}"))
@@ -463,7 +465,7 @@ public partial class Assembler
             )
             .Or(
                 from cmd in Parse.String("CALL").Return((byte)0b11001101)
-                from addr in ExpressionParser.AddrParser(labels).Token()
+                from addr in Parser.AddrParser(labels).Token()
                 select (byte[]) [cmd, (byte)addr, (byte)(addr >> 8)]
             )
             .Or(

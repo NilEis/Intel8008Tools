@@ -1,4 +1,5 @@
-﻿using AssemblerBackend;
+﻿using System.Diagnostics;
+using AssemblerBackend;
 using Intel8080Tools;
 
 Intel8080.RunTestSuite(true);
@@ -33,11 +34,13 @@ const string input = """
                          resw 2
                      resb 2
                      resq 4
-
                      """;
 
+Debug.Assert(DownloadUtil.GetFileStringCached(true, "cpudiag.asm", "http://www.emulator101.com/files/cpudiag.asm",
+    out var str));
 
-if (Assembler.Assemble(input, out var b))
+
+if (Assembler.Assemble(str, out var b))
 {
     uint c = 0;
     ushort p = 0;
